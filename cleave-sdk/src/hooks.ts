@@ -31,6 +31,30 @@ function scriptsDir(): string {
 }
 
 /**
+ * Copy a script to a safe temp location with no spaces in the path.
+ * Claude Code's hook executor splits commands on spaces, so paths like
+ * "/Users/user/Cleave Code/scripts/stop-check.sh" break silently.
+ *
+ * Fix: copy to /tmp/cleave-hooks/<hash>/ which has no spaces.
+ */
+function safeCopyScript(scriptPath: string): string {
+  const crypto = require('crypto');
+  const hash = crypto.createHash('md5').update(scriptPath).digest('hex').slice(0, 8);
+  const safeDir = path.join('/tmp', `cleave-hooks-${hash}`);
+  const safePath = path.join(safeDir, path.basename(scriptPath));
+
+  // Only copy if source is newer or dest doesn't exist
+  if (!fs.existsSync(safePath) ||
+      fs.statSync(scriptPath).mtimeMs > fs.statSync(safePath).mtimeMs) {
+    fs.mkdirSync(safeDir, { recursive: true });
+    fs.copyFileSync(scriptPath, safePath);
+    fs.chmodSync(safePath, 0o755);
+  }
+
+  return safePath;
+}
+
+/**
  * Generate a settings JSON file for the `claude --settings` flag.
  * Contains Stop and SessionStart hooks that enforce the handoff protocol.
  *
@@ -48,10 +72,11 @@ export function generateSettingsFile(relayDir: string): string {
     logger.warn(`SessionStart hook script not found: ${startScript}`);
   }
 
-  // Shell-escape paths for spaces in directory names (e.g., "Cleave Code").
-  // JSON strings are already quoted, so we must NOT add literal " chars.
-  // Instead, use bash with single-quoted path for safe shell invocation.
-  const shellEscape = (p: string) => `bash '${p.replace(/'/g, "'\\''")}'`;
+  // Copy scripts to a safe temp path with no spaces.
+  // Claude Code's hook executor splits command strings on spaces,
+  // so paths containing spaces (e.g., "Cleave Code") break.
+  const safeStopScript = fs.existsSync(stopScript) ? safeCopyScript(stopScript) : stopScript;
+  const safeStartScript = fs.existsSync(startScript) ? safeCopyScript(startScript) : startScript;
 
   const settings = {
     hooks: {
@@ -60,7 +85,7 @@ export function generateSettingsFile(relayDir: string): string {
           hooks: [
             {
               type: 'command',
-              command: shellEscape(stopScript),
+              command: safeStopScript,
               timeout: 10,
             },
           ],
@@ -71,7 +96,7 @@ export function generateSettingsFile(relayDir: string): string {
           hooks: [
             {
               type: 'command',
-              command: shellEscape(startScript),
+              command: safeStartScript,
               timeout: 5,
             },
           ],
@@ -83,6 +108,8 @@ export function generateSettingsFile(relayDir: string): string {
   const settingsPath = path.join(relayDir, '.cleave-settings.json');
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   logger.debug(`Generated settings file: ${settingsPath}`);
+  logger.debug(`Stop hook: ${safeStopScript}`);
+  logger.debug(`SessionStart hook: ${safeStartScript}`);
   return settingsPath;
 }
 
