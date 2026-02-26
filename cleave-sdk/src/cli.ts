@@ -25,7 +25,8 @@ export function parseArgs(argv: string[]): CleaveConfig {
     .option('--verify <command>', 'Verification command (exit 0 = done)')
     .option('--safe-mode', 'Require permission prompts', DEFAULT_CONFIG.safeMode)
     .option('-v, --verbose', 'Detailed logging', DEFAULT_CONFIG.verbose)
-    .option('--subagents', 'Hint Claude to spawn subagents', DEFAULT_CONFIG.enableSubagents);
+    .option('--subagents', 'Hint Claude to spawn subagents', DEFAULT_CONFIG.enableSubagents)
+    .option('--no-tui', 'Headless mode — use Agent SDK query() instead of TUI');
 
   program.parse(argv);
   const opts = program.opts();
@@ -83,6 +84,7 @@ export function parseArgs(argv: string[]): CleaveConfig {
     handoffDeadline: DEFAULT_CONFIG.handoffDeadline,
     knowledgeKeepSessions: DEFAULT_CONFIG.knowledgeKeepSessions,
     rateLimitMaxWait: DEFAULT_CONFIG.rateLimitMaxWait,
+    tui: opts.tui ?? DEFAULT_CONFIG.tui,
   };
 
   return config;

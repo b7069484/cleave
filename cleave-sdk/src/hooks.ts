@@ -1,24 +1,89 @@
 /**
- * Programmatic hook definitions for the Agent SDK.
+ * Hook management for Cleave SDK.
  *
- * The Stop hook is the key enforcement mechanism — it blocks Claude from
- * exiting until the handoff files (PROGRESS.md, KNOWLEDGE.md, NEXT_PROMPT.md)
- * have been written this session.
+ * In TUI mode: generates a temporary settings JSON file with shell-based hooks
+ * that enforce handoff behavior. Passed to `claude --settings <file>`.
  *
- * This is the single biggest improvement over v2/v3: no shell scripts,
- * no exit code 2 bugs, no JSON parsing issues. Just async functions.
+ * In headless mode (--no-tui): builds programmatic hooks for the SDK query() API.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { RelayPaths, checkHandoffFiles } from './state/files';
 import { isComplete } from './detection/completion';
 import { logger } from './utils/logger';
 
 /**
- * Build the hooks configuration for the SDK query() options.
+ * Resolve the absolute path to the scripts directory.
+ * Works whether running from src/ (ts-node) or dist/ (compiled).
+ */
+function scriptsDir(): string {
+  // __dirname is either src/ or dist/src/ — scripts are at project root/scripts/
+  let dir = __dirname;
+  // Walk up until we find scripts/
+  for (let i = 0; i < 5; i++) {
+    const candidate = path.join(dir, 'scripts');
+    if (fs.existsSync(candidate)) return candidate;
+    dir = path.dirname(dir);
+  }
+  // Fallback: assume scripts/ is sibling to dist/
+  return path.join(path.dirname(path.dirname(__dirname)), 'scripts');
+}
+
+/**
+ * Generate a settings JSON file for the `claude --settings` flag.
+ * Contains Stop and SessionStart hooks that enforce the handoff protocol.
  *
- * The SDK hooks format uses event names as keys, each mapping to an array
- * of hook group objects. Each group has a `hooks` array with the actual
- * hook implementations.
+ * Returns the path to the generated settings file.
+ */
+export function generateSettingsFile(relayDir: string): string {
+  const stopScript = path.join(scriptsDir(), 'stop-check.sh');
+  const startScript = path.join(scriptsDir(), 'session-start.sh');
+
+  // Verify scripts exist
+  if (!fs.existsSync(stopScript)) {
+    logger.warn(`Stop hook script not found: ${stopScript}`);
+  }
+  if (!fs.existsSync(startScript)) {
+    logger.warn(`SessionStart hook script not found: ${startScript}`);
+  }
+
+  const settings = {
+    hooks: {
+      Stop: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: stopScript,
+              timeout: 10,
+            },
+          ],
+        },
+      ],
+      SessionStart: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: startScript,
+              timeout: 5,
+            },
+          ],
+        },
+      ],
+    },
+  };
+
+  const settingsPath = path.join(relayDir, '.cleave-settings.json');
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  logger.debug(`Generated settings file: ${settingsPath}`);
+  return settingsPath;
+}
+
+/**
+ * Build programmatic hooks for the SDK query() API (headless/--no-tui mode).
+ * Same enforcement logic as the shell scripts, but as async JS functions.
  */
 export function buildHooks(paths: RelayPaths, completionMarker: string) {
   return {
@@ -36,7 +101,6 @@ export function buildHooks(paths: RelayPaths, completionMarker: string) {
             const { missing, stale } = checkHandoffFiles(paths);
 
             if (missing.length === 0 && stale.length === 0) {
-              // All handoff files present and fresh — allow exit
               logger.debug('Stop hook: handoff files verified, allowing exit');
               return {};
             }
@@ -56,11 +120,10 @@ export function buildHooks(paths: RelayPaths, completionMarker: string) {
             errorMsg += '2. Update .cleave/KNOWLEDGE.md — promote insights to Core, append session notes\n';
             errorMsg += '3. Write .cleave/NEXT_PROMPT.md — complete prompt for next session\n';
             errorMsg += '4. Print RELAY_HANDOFF_COMPLETE or TASK_FULLY_COMPLETE\n';
-            errorMsg += '\nIf the task is fully done, set STATUS: ALL_COMPLETE in PROGRESS.md.';
+            errorMsg += `\nIf ALL work is done, set STATUS: ${completionMarker} in PROGRESS.md.`;
 
             logger.debug('Stop hook: blocking exit — handoff incomplete');
 
-            // Return decision to block the exit and feed error message back to Claude
             return {
               decision: 'block',
               reason: errorMsg,

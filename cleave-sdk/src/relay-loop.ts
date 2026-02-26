@@ -32,7 +32,7 @@ import { runSession } from './session';
 import { commitSession } from './integrations/git';
 import { sendNotification } from './integrations/notify';
 import { archiveSession } from './integrations/archive';
-import { buildSessionPrompt } from './utils/prompt-builder';
+import { buildSessionPrompt, buildTaskPrompt } from './utils/prompt-builder';
 import { FileLock } from './utils/lock';
 import { logger } from './utils/logger';
 
@@ -91,7 +91,7 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
 
   // Show banner
   logger.banner(config);
-  logger.info('cleave started (Agent SDK edition)');
+  logger.info(`cleave started (${config.tui ? 'TUI' : 'headless'} mode)`);
   logger.debug(`Work dir: ${config.workDir}`);
   logger.debug(`Initial prompt: ${config.initialPromptFile}`);
 
@@ -149,18 +149,24 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
     }
 
     // ── Build prompt ──
-    const prompt = buildSessionPrompt(config, sessionCount);
+    // TUI mode: task prompt only (handoff instructions go via --append-system-prompt)
+    // Headless mode: full prompt with handoff instructions appended
+    const prompt = config.tui
+      ? buildTaskPrompt(config, sessionCount)
+      : buildSessionPrompt(config, sessionCount);
 
     // ── Session header ──
     logger.session(sessionCount, config.maxSessions);
     writeStatus(paths.statusFile, config, sessionCount, 'running', `Session #${sessionCount} active`);
 
     // ── Touch session start marker ──
+    // In TUI mode the SessionStart hook also touches this, but we do it here too
+    // for consistency and in case the hook doesn't fire (e.g., hook installation issue)
     touchSessionStart(paths, sessionCount);
 
     // ── Run session ──
     const result = await runSession(prompt, config, paths, sessionCount);
-    logger.debug(`Session #${sessionCount} exited (reason: ${result.exitReason})`);
+    logger.debug(`Session #${sessionCount} exited (code: ${result.exitCode})`);
 
     // ── Handle rate limit ──
     if (result.rateLimited) {

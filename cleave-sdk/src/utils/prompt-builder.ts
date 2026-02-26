@@ -7,9 +7,10 @@ import * as path from 'path';
 import { CleaveConfig } from '../config';
 
 /**
- * Build the handoff instructions block that gets appended to every prompt.
+ * Build the handoff instructions block.
+ * Exported so TUI mode can pass it via --append-system-prompt separately.
  */
-function buildHandoffInstructions(config: CleaveConfig): string {
+export function buildHandoffInstructions(config: CleaveConfig): string {
   const subagentBlock = config.enableSubagents ? `
 **SUBAGENT STRATEGY (recommended for heavy tasks):**
 For tasks that involve processing many files or doing repetitive work, consider
@@ -76,7 +77,41 @@ and print \`TASK_FULLY_COMPLETE\` instead.
 }
 
 /**
- * Build the complete prompt for a given session.
+ * Build just the task prompt (without handoff instructions).
+ * Used in TUI mode where handoff instructions go via --append-system-prompt.
+ */
+export function buildTaskPrompt(config: CleaveConfig, sessionNum: number): string {
+  const relayDir = path.join(config.workDir, '.cleave');
+  const progressFile = path.join(relayDir, 'PROGRESS.md');
+  const nextPromptFile = path.join(relayDir, 'NEXT_PROMPT.md');
+  const knowledgeFile = path.join(relayDir, 'KNOWLEDGE.md');
+
+  let prompt: string;
+
+  if (sessionNum > 1 && fs.existsSync(nextPromptFile)) {
+    prompt = fs.readFileSync(nextPromptFile, 'utf8');
+  } else {
+    prompt = fs.readFileSync(config.initialPromptFile, 'utf8');
+
+    if (fs.existsSync(progressFile)) {
+      const progress = fs.readFileSync(progressFile, 'utf8');
+      prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${progress}`;
+    }
+  }
+
+  if (fs.existsSync(knowledgeFile)) {
+    const knowledgeLines = fs.readFileSync(knowledgeFile, 'utf8').split('\n').length;
+    if (knowledgeLines > 10) {
+      prompt += '\n\n--- ACCUMULATED KNOWLEDGE ---\nRead `.cleave/KNOWLEDGE.md` for tips and patterns from prior sessions.';
+    }
+  }
+
+  return prompt;
+}
+
+/**
+ * Build the complete prompt for a given session (task + handoff instructions).
+ * Used in headless/query() mode.
  */
 export function buildSessionPrompt(config: CleaveConfig, sessionNum: number): string {
   const relayDir = path.join(config.workDir, '.cleave');

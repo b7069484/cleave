@@ -50,6 +50,9 @@ export interface CleaveConfig {
 
   /** Maximum seconds to wait for rate limit reset */
   rateLimitMaxWait: number;
+
+  /** Show the full Claude Code TUI (default: true). False = headless query() mode. */
+  tui: boolean;
 }
 
 export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
@@ -68,6 +71,7 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   handoffDeadline: 70,
   knowledgeKeepSessions: 5,
   rateLimitMaxWait: 18000,
+  tui: true,
 };
 
-export const VERSION = '4.0.0';
+export const VERSION = '4.1.0';
