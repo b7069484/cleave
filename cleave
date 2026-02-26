@@ -1,0 +1,778 @@
+#!/bin/bash
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  cleave v2 — Infinite context for Claude Code                      ║
+# ║                                                                          ║
+# ║  Chain sessions together for tasks that exceed a single context window.  ║
+# ║  Each session writes its own continuation prompt.                        ║
+# ║                                                                          ║
+# ║  Usage:  cleave [options] <initial-prompt-file>                    ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+#
+# FEATURES:
+#   • Self-authored handoffs — each session writes the next session's prompt
+#   • Rate limit detection — waits for limits to lift, then resumes
+#   • Knowledge accumulation — persistent KNOWLEDGE.md grows across sessions
+#   • Loop detection — alerts if sessions get stuck repeating
+#   • Crash recovery — falls back to initial prompt + PROGRESS.md
+#   • Desktop notifications — alerts on completion, failure, or rate limit
+#   • Git integration — optional auto-commit after each session
+#   • Full audit trail — every prompt and progress file archived
+#   • Resume support — restart from a specific session number
+
+set -uo pipefail
+
+# ── Bash version check ──────────────────────────────────────────────────────
+if ((BASH_VERSINFO[0] < 4)); then
+    echo "Error: Bash 4+ required (you have ${BASH_VERSION})."
+    echo "  macOS: brew install bash"
+    exit 1
+fi
+
+VERSION="2.3.0"
+
+# ── Defaults ──────────────────────────────────────────────────────────────────
+MAX_SESSIONS=10
+WORK_DIR="."
+PAUSE_SECONDS=10
+COMPLETION_MARKER="ALL_COMPLETE"
+RELAY_DIR=".cleave"
+VERBOSE=false
+GIT_COMMIT=false
+NOTIFY=true
+RESUME_FROM=0
+RATE_LIMIT_MAX_WAIT=18000  # 5 hours max wait for rate limits
+VERIFY_CMD=""              # Optional verification command
+HANDOFF_THRESHOLD=60       # Context % to begin handoff (stop productive work)
+HANDOFF_DEADLINE=70        # Context % hard wall (must finish handoff before this)
+SUBAGENT_HINT=false        # Hint Claude Code to use subagents for heavy tasks
+SKIP_PERMISSIONS=true      # Pass --dangerously-skip-permissions to claude
+KNOWLEDGE_KEEP_SESSIONS=5  # Rolling window: keep last N session entries in knowledge log
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+DIM='\033[2m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# ── Parse arguments ───────────────────────────────────────────────────────────
+usage() {
+    cat << EOF
+${BOLD}cleave${NC} v${VERSION} — Infinite context for Claude Code
+
+${BOLD}USAGE${NC}
+  cleave [options] <initial-prompt-file>
+
+${BOLD}OPTIONS${NC}
+  -m, --max-sessions N      Maximum sessions (default: 10)
+  -d, --work-dir DIR        Working directory (default: .)
+  -p, --pause N             Seconds between sessions (default: 10)
+  -c, --completion-marker   String signaling task completion (default: ALL_COMPLETE)
+  -g, --git-commit          Auto-commit after each session
+      --no-notify           Disable desktop notifications
+  -r, --resume-from N       Resume from session N (reuse last handoff)
+      --verify CMD          Verify completion with CMD (exit 0 = done)
+      --subagents           Hint Claude to spawn subagents for heavy subtasks
+      --safe-mode           Require Claude Code permission prompts (no --dangerously-skip-permissions)
+  -v, --verbose             Detailed logging
+  -h, --help                Show this help
+      --version             Show version
+
+${BOLD}EXAMPLES${NC}
+  cleave my_prompt.md
+  cleave --max-sessions 20 -d ./project prompt.md
+  cleave --git-commit -m 15 research_task.md
+  cleave --verify "pytest ./tests/ -x" --max-sessions 20 task.md
+  cleave --subagents --max-sessions 15 big_task.md
+  cleave --resume-from 5 my_prompt.md
+
+${BOLD}FILES${NC}
+  .cleave/
+  ├── PROGRESS.md              Status report (each session)
+  ├── NEXT_PROMPT.md           Continuation prompt (by Claude Code)
+  ├── KNOWLEDGE.md             Accumulated tips (grows over time)
+  ├── status.json              Machine-readable status
+  └── logs/                    Full session archive
+EOF
+    exit 0
+}
+
+INITIAL_PROMPT=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -m|--max-sessions)
+            if ! [[ "$2" =~ ^[0-9]+$ ]] || [ "$2" -lt 1 ] || [ "$2" -gt 1000 ]; then
+                echo -e "${RED}Error: --max-sessions must be an integer between 1 and 1000${NC}"; exit 1
+            fi
+            MAX_SESSIONS="$2"; shift 2 ;;
+        -d|--work-dir) WORK_DIR="$2"; shift 2 ;;
+        -p|--pause)
+            if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                echo -e "${RED}Error: --pause must be a non-negative integer${NC}"; exit 1
+            fi
+            PAUSE_SECONDS="$2"; shift 2 ;;
+        -c|--completion-marker) COMPLETION_MARKER="$2"; shift 2 ;;
+        -g|--git-commit) GIT_COMMIT=true; shift ;;
+        --no-notify) NOTIFY=false; shift ;;
+        -r|--resume-from)
+            if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                echo -e "${RED}Error: --resume-from must be a non-negative integer${NC}"; exit 1
+            fi
+            RESUME_FROM="$2"; shift 2 ;;
+        --verify) VERIFY_CMD="$2"; shift 2 ;;
+        --subagents) SUBAGENT_HINT=true; shift ;;
+        --safe-mode) SKIP_PERMISSIONS=false; shift ;;
+        -v|--verbose) VERBOSE=true; shift ;;
+        -h|--help) usage ;;
+        --version) echo "cleave v${VERSION}"; exit 0 ;;
+        -*) echo -e "${RED}Unknown option: $1${NC}"; usage ;;
+        *)
+            if [ -z "$INITIAL_PROMPT" ]; then
+                INITIAL_PROMPT="$1"
+            else
+                echo -e "${RED}Error: unexpected argument '$1'${NC}"
+                usage
+            fi
+            shift ;;
+    esac
+done
+
+if [ -z "$INITIAL_PROMPT" ]; then
+    echo -e "${RED}Error: no initial prompt file specified.${NC}"
+    echo ""
+    usage
+fi
+
+if [ ! -f "$INITIAL_PROMPT" ]; then
+    echo -e "${RED}Error: prompt file not found: $INITIAL_PROMPT${NC}"
+    exit 1
+fi
+
+# Verify Claude Code is installed
+if ! command -v claude &> /dev/null; then
+    echo -e "${RED}Error: 'claude' CLI not found. Install Claude Code first.${NC}"
+    echo "  https://docs.anthropic.com/en/docs/claude-code"
+    exit 1
+fi
+
+# ── Setup paths ───────────────────────────────────────────────────────────────
+WORK_DIR=$(cd "$WORK_DIR" && pwd)
+RELAY_DIR="$WORK_DIR/.cleave"
+PROGRESS_FILE="$RELAY_DIR/PROGRESS.md"
+NEXT_PROMPT_FILE="$RELAY_DIR/NEXT_PROMPT.md"
+KNOWLEDGE_FILE="$RELAY_DIR/KNOWLEDGE.md"
+STATUS_FILE="$RELAY_DIR/status.json"
+LOG_DIR="$RELAY_DIR/logs"
+SESSION_LOG="$LOG_DIR/relay.log"
+
+mkdir -p "$LOG_DIR"
+chmod 700 "$RELAY_DIR"
+
+# ── Secure temp files ────────────────────────────────────────────────────────
+TEMP_FILES=()
+make_temp() {
+    local tmpfile
+    tmpfile=$(mktemp "$RELAY_DIR/_tmp.XXXXXX")
+    TEMP_FILES+=("$tmpfile")
+    echo "$tmpfile"
+}
+
+# ── Cleanup on exit ──────────────────────────────────────────────────────────
+cleanup() {
+    for f in "${TEMP_FILES[@]}"; do
+        rm -f "$f" 2>/dev/null
+    done
+    # Also clean any leftover legacy temp files
+    rm -f "$RELAY_DIR"/_session_output.tmp "$RELAY_DIR"/_verify_output.tmp \
+          "$RELAY_DIR"/_knowledge_compact.tmp "$RELAY_DIR"/_session_prompt.md 2>/dev/null
+    # Release lock
+    rm -f "$RELAY_DIR/.lock" 2>/dev/null
+}
+trap cleanup EXIT INT TERM
+
+# ── File locking (prevent concurrent runs) ───────────────────────────────────
+LOCK_FILE="$RELAY_DIR/.lock"
+if command -v flock &> /dev/null; then
+    # Preferred: kernel-atomic locking (no TOCTOU race)
+    exec 9> "$LOCK_FILE"
+    if ! flock -n 9; then
+        echo -e "${RED}Error: another cleave session is already running in $WORK_DIR${NC}"
+        echo -e "${DIM}If this is stale, remove $LOCK_FILE${NC}"
+        exit 1
+    fi
+    echo $$ > "$LOCK_FILE"
+else
+    # Fallback: PID-based locking (works on macOS without flock)
+    if [ -f "$LOCK_FILE" ]; then
+        lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+            echo -e "${RED}Error: another cleave session is already running (PID $lock_pid).${NC}"
+            echo -e "${DIM}If this is stale, remove $LOCK_FILE${NC}"
+            exit 1
+        fi
+    fi
+    echo $$ > "$LOCK_FILE"
+fi
+
+# Initialize KNOWLEDGE.md if it doesn't exist
+if [ ! -f "$KNOWLEDGE_FILE" ]; then
+    cat > "$KNOWLEDGE_FILE" << 'KNOW'
+# Accumulated Knowledge
+
+## Core Knowledge
+Persistent insights that matter for every session. Promote important
+discoveries here — this section is never pruned.
+
+
+## Session Log
+Recent session notes (auto-pruned to last 5 sessions by the relay script).
+
+KNOW
+fi
+
+# ── Verification Command ──────────────────────────────────────────────────────
+# Inspired by Ralph Wiggum's "completion promise" — verify with objective criteria
+run_verification() {
+    if [ -z "$VERIFY_CMD" ]; then
+        return 1  # No verification command set
+    fi
+
+    log_msg "${CYAN}🔍 Running verification: ${VERIFY_CMD}${NC}"
+    cd "$WORK_DIR" || return 1
+
+    local verify_tmp
+    verify_tmp=$(make_temp)
+    if bash -c "$VERIFY_CMD" > "$verify_tmp" 2>&1; then
+        log_msg "${GREEN}✅ Verification PASSED — task is objectively complete${NC}"
+        return 0  # Verified complete
+    else
+        local exit_code=$?
+        log_msg "${DIM}  Verification returned exit code $exit_code — task not yet complete${NC}"
+        if [ "$VERBOSE" = true ] && [ -f "$verify_tmp" ]; then
+            head -5 "$verify_tmp" | while read -r line; do
+                log_msg "${DIM}    $line${NC}"
+            done
+        fi
+        return 1  # Not yet complete
+    fi
+}
+
+# ── Knowledge Compaction ─────────────────────────────────────────────────────
+# Prevents KNOWLEDGE.md from growing unbounded and consuming context.
+# Keeps the Core Knowledge section intact, prunes Session Log to last N entries.
+compact_knowledge() {
+    [ ! -f "$KNOWLEDGE_FILE" ] && return
+
+    # Count session entries (marked by ### Session)
+    local entry_count
+    entry_count=$(grep -c '^### Session' "$KNOWLEDGE_FILE" 2>/dev/null || echo 0)
+
+    if [ "$entry_count" -le "$KNOWLEDGE_KEEP_SESSIONS" ]; then
+        return  # Nothing to prune
+    fi
+
+    local pruned
+    pruned=$(make_temp)
+
+    # Extract everything up to and including the "## Session Log" header line + next blank line
+    local log_header_line
+    log_header_line=$(grep -n '^## Session Log' "$KNOWLEDGE_FILE" | head -1 | cut -d: -f1)
+
+    if [ -z "$log_header_line" ]; then
+        # No structured sections — legacy format, skip compaction
+        return
+    fi
+
+    # Keep header (everything up to and including Session Log header + 1 blank line)
+    head -n "$((log_header_line + 1))" "$KNOWLEDGE_FILE" > "$pruned"
+
+    # Extract session entries, keep last N
+    # Each entry starts with "### Session" — split on that boundary
+    local entries_to_keep=$KNOWLEDGE_KEEP_SESSIONS
+    local total_entries=$entry_count
+    local entries_to_skip=$((total_entries - entries_to_keep))
+
+    # Use awk to split by "### Session" markers and keep last N
+    awk -v skip="$entries_to_skip" -v header_end="$log_header_line" '
+        NR <= header_end + 1 { next }  # Skip header (already written)
+        /^### Session/ { entry_num++ }
+        entry_num > skip { print }
+    ' "$KNOWLEDGE_FILE" >> "$pruned"
+
+    local old_lines new_lines
+    old_lines=$(wc -l < "$KNOWLEDGE_FILE" | tr -d ' ')
+    new_lines=$(wc -l < "$pruned" | tr -d ' ')
+
+    mv "$pruned" "$KNOWLEDGE_FILE"
+    log_msg "${DIM}  Knowledge compacted: ${old_lines} → ${new_lines} lines (kept last ${entries_to_keep} session entries)${NC}"
+}
+
+# ── Handoff instructions (appended to every prompt) ──────────────────────────
+build_handoff_instructions() {
+    local subagent_block=""
+    if [ "$SUBAGENT_HINT" = true ]; then
+        subagent_block="
+**SUBAGENT STRATEGY (recommended for heavy tasks):**
+For tasks that involve processing many files or doing repetitive work, consider
+spawning subagents to keep your main context lean:
+  \`claude -p \"Process files X-Y according to these rules: ...\" --dangerously-skip-permissions\`
+This gives each subtask a fresh 200K context window while your orchestrator
+session stays at ~15-30% context. Only do this for clearly independent subtasks.
+"
+    fi
+
+    cat << HANDOFF
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AUTOMATED SESSION RELAY — MANDATORY INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You are running inside an automated relay system. Context quality degrades
+predictably: 0-30% = peak quality, 50%+ = declining, 70%+ = errors/hallucinations.
+
+**CONTEXT BUDGET:**
+- **0–${HANDOFF_THRESHOLD}%** — Do productive work. This is your working zone.
+- **${HANDOFF_THRESHOLD}%** — STOP productive work. Begin the handoff procedure below.
+- **${HANDOFF_THRESHOLD}–${HANDOFF_DEADLINE}%** — Handoff zone. Write the three files below.
+  This is structured/formulaic output — quality holds fine here.
+- **${HANDOFF_DEADLINE}%+** — DANGER. Never reach this. Quality collapses.
+
+When you estimate you've used ~${HANDOFF_THRESHOLD}% of your context window, STOP working
+and execute the handoff procedure immediately.
+${subagent_block}
+**STEP 1 — Update \`.cleave/PROGRESS.md\`:**
+- STATUS: either \`IN_PROGRESS\` or \`$COMPLETION_MARKER\`
+- What you accomplished (specific counts, files, items)
+- Exactly where you stopped (be precise — file, line, item, step)
+- Issues encountered and resolutions
+- Session number and timestamp
+
+**STEP 2 — Update \`.cleave/KNOWLEDGE.md\`:**
+This file has two sections — read it first, then update:
+\`## Core Knowledge\` — PERMANENT insights every session needs (API keys, working
+  search terms, critical config, architectural decisions). If you discover something
+  universally important, add it here. Keep it concise — this section is never pruned.
+\`## Session Log\` — Your session-specific notes. APPEND a new entry at the bottom:
+  Format: \`### Session N — [Date]\` followed by bullet points.
+  Include: what worked, what failed, dead ends, performance observations.
+  This section is auto-pruned to the last 5 entries by the relay script, so
+  promote anything permanently valuable up to Core Knowledge before it's lost.
+IMPORTANT: APPEND to this file. Do not overwrite or reorganize existing content.
+
+**STEP 3 — Write \`.cleave/NEXT_PROMPT.md\`:**
+The EXACT prompt for the next session (fed verbatim). Include:
+- Full task context (the next session has zero memory)
+- What scripts/tools exist and how to use them
+- Setup steps (venv, env vars, etc.)
+- Exactly where to resume
+- Reference KNOWLEDGE.md: tell next session to read it
+- These same handoff instructions
+- End with: "When at ~${HANDOFF_THRESHOLD}% context, STOP and do the handoff procedure."
+
+**STEP 4 — Print exactly:** \`RELAY_HANDOFF_COMPLETE\`
+Then stop immediately.
+
+If ALL work is done, write \`STATUS: $COMPLETION_MARKER\` in PROGRESS.md
+and print \`TASK_FULLY_COMPLETE\` instead.
+HANDOFF
+}
+
+# ── Helper functions ──────────────────────────────────────────────────────────
+log_msg() {
+    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    echo -e "$msg"
+    echo "$msg" | sed 's/\x1b\[[0-9;]*m//g' >> "$SESSION_LOG"
+}
+
+is_complete() {
+    [ -f "$PROGRESS_FILE" ] && head -10 "$PROGRESS_FILE" | grep -qi "$COMPLETION_MARKER"
+}
+
+check_and_exit_if_complete() {
+    local session_num=$1
+    if is_complete; then
+        log_msg "${GREEN}✅ Task complete after session #${session_num}!${NC}"
+        write_status $session_num "complete" "All done"
+        send_notification "cleave ✅" "Task complete after $session_num sessions!"
+        git_commit_session $session_num
+        return 0
+    fi
+    return 1
+}
+
+# ── Desktop Notifications ─────────────────────────────────────────────────────
+send_notification() {
+    local title="$1"
+    local message="$2"
+
+    [ "$NOTIFY" = false ] && return
+
+    # Sanitize for safe shell embedding
+    title="${title//\\/\\\\}"
+    title="${title//\"/\\\"}"
+    title="${title//$'\n'/ }"
+    title="${title//\`/}"
+    title="${title//\$/}"
+    message="${message//\\/\\\\}"
+    message="${message//\"/\\\"}"
+    message="${message//$'\n'/ }"
+    message="${message//\`/}"
+    message="${message//\$/}"
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        osascript -e "display notification \"$message\" with title \"$title\"" 2>/dev/null || true
+    elif command -v notify-send &> /dev/null; then
+        notify-send "$title" "$message" 2>/dev/null || true
+    fi
+}
+
+# ── Rate Limit Detection ─────────────────────────────────────────────────────
+# Inspired by claude-auto-resume (github.com/terryso/claude-auto-resume)
+check_and_wait_for_rate_limit() {
+    local exit_code=$1
+    local session_output_file="$2"
+
+    # Check if the session output contains rate limit indicators
+    if [ -f "$session_output_file" ]; then
+        if grep -qi "usage limit\|rate limit\|too many requests\|limit reached" "$session_output_file" 2>/dev/null; then
+            log_msg "${YELLOW}⏳ Rate limit detected. Checking reset time...${NC}"
+            send_notification "cleave" "Rate limit hit. Waiting for reset..."
+
+            # Try to extract reset timestamp from output
+            local reset_time=""
+            reset_time=$(grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}' "$session_output_file" 2>/dev/null | head -1 || echo "")
+
+            local wait_seconds=300  # Default: wait 5 minutes
+
+            if [ -n "$reset_time" ]; then
+                # Try to calculate wait time from timestamp
+                local now_epoch
+                now_epoch=$(date +%s)
+                local reset_epoch
+                reset_epoch=$(date -d "$reset_time" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M" "$reset_time" +%s 2>/dev/null || echo "0")
+
+                if [ "$reset_epoch" -gt "$now_epoch" ] 2>/dev/null; then
+                    wait_seconds=$((reset_epoch - now_epoch + 30))  # +30s buffer
+                    if [ "$wait_seconds" -gt "$RATE_LIMIT_MAX_WAIT" ]; then
+                        wait_seconds=$RATE_LIMIT_MAX_WAIT
+                    fi
+                fi
+            fi
+
+            log_msg "${YELLOW}  Waiting ${wait_seconds} seconds for rate limit to reset...${NC}"
+
+            # Countdown display (updates every 10s to avoid wasting cycles)
+            local remaining=$wait_seconds
+            while [ $remaining -gt 0 ]; do
+                local mins=$((remaining / 60))
+                local secs=$((remaining % 60))
+                printf "\r  ${DIM}Rate limit reset in: %02d:%02d${NC}  " $mins $secs
+                local tick=10
+                [ $remaining -lt 10 ] && tick=$remaining
+                sleep $tick
+                remaining=$((remaining - tick))
+            done
+            printf "\r  ${GREEN}Rate limit should be lifted.${NC}          \n"
+
+            return 0  # Signal: was rate limited, should retry
+        fi
+    fi
+
+    return 1  # Signal: was NOT rate limited
+}
+
+# ── Loop Detection ────────────────────────────────────────────────────────────
+check_for_loop() {
+    local session_num=$1
+
+    if [ "$session_num" -lt 3 ]; then
+        return 1  # Need at least 3 sessions to detect a loop
+    fi
+
+    local prev=$((session_num - 1))
+    local prev_prompt="$LOG_DIR/session_${prev}_next_prompt.md"
+    local current_prompt="$NEXT_PROMPT_FILE"
+
+    if [ -f "$prev_prompt" ] && [ -f "$current_prompt" ]; then
+        # Compare file sizes first (quick check)
+        local prev_size current_size
+        prev_size=$(wc -c < "$prev_prompt" | tr -d ' ')
+        current_size=$(wc -c < "$current_prompt" | tr -d ' ')
+
+        # If sizes are within 10% of each other, do deeper comparison
+        local diff_threshold=$(( prev_size / 10 ))
+        local size_diff=$(( current_size - prev_size ))
+        size_diff=${size_diff#-}  # absolute value
+
+        if [ "$size_diff" -lt "$diff_threshold" ] 2>/dev/null; then
+            # Check line-by-line similarity
+            local total_lines
+            total_lines=$(wc -l < "$current_prompt" | tr -d ' ')
+            local identical_lines
+            identical_lines=$(comm -12 <(sort "$prev_prompt") <(sort "$current_prompt") | wc -l | tr -d ' ')
+
+            if [ "$total_lines" -gt 0 ]; then
+                local similarity=$(( (identical_lines * 100) / total_lines ))
+                if [ "$similarity" -gt 85 ]; then
+                    log_msg "${RED}🔄 LOOP DETECTED: Session $session_num's handoff is ${similarity}% identical to session $prev${NC}"
+                    log_msg "${RED}   The agent may be stuck. Review .cleave/logs/ and modify your prompt.${NC}"
+                    send_notification "cleave ⚠️" "Loop detected! Sessions are repeating. Check logs."
+                    return 0  # Loop detected
+                fi
+            fi
+        fi
+    fi
+
+    return 1  # No loop
+}
+
+# ── Git Integration ───────────────────────────────────────────────────────────
+git_commit_session() {
+    local session_num=$1
+
+    [ "$GIT_COMMIT" = false ] && return
+
+    if [ -d "$WORK_DIR/.git" ]; then
+        cd "$WORK_DIR" || return
+        if ! git add -A 2>&1; then
+            log_msg "${YELLOW}  Git: failed to stage changes for session #${session_num}${NC}"
+            return
+        fi
+        local changes
+        changes=$(git diff --cached --stat 2>&1)
+        if [ -n "$changes" ]; then
+            if git commit -m "cleave: session #${session_num} checkpoint" --no-verify 2>&1; then
+                log_msg "${DIM}  Git: committed session #${session_num} changes${NC}"
+            else
+                log_msg "${YELLOW}  Git: commit failed for session #${session_num}${NC}"
+            fi
+        fi
+    else
+        log_msg "${YELLOW}  Git: --git-commit enabled but $WORK_DIR is not a git repo${NC}"
+    fi
+}
+
+# ── Status File ───────────────────────────────────────────────────────────────
+escape_json() {
+    local str="$1"
+    str="${str//\\/\\\\}"
+    str="${str//\"/\\\"}"
+    str="${str//$'\n'/\\n}"
+    str="${str//$'\r'/\\r}"
+    str="${str//$'\t'/\\t}"
+    echo -n "$str"
+}
+
+write_status() {
+    local session_num=$1
+    local status=$2
+    local message=$3
+
+    local j_status j_message j_workdir j_marker
+    j_status=$(escape_json "$status")
+    j_message=$(escape_json "$message")
+    j_workdir=$(escape_json "$WORK_DIR")
+    j_marker=$(escape_json "$COMPLETION_MARKER")
+
+    cat > "$STATUS_FILE" << EOF
+{
+  "tool": "cleave",
+  "version": "$VERSION",
+  "session": $session_num,
+  "max_sessions": $MAX_SESSIONS,
+  "status": "$j_status",
+  "message": "$j_message",
+  "updated_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
+  "work_dir": "$j_workdir",
+  "completion_marker": "$j_marker"
+}
+EOF
+}
+
+# ── Build Session Prompt ──────────────────────────────────────────────────────
+build_session_prompt() {
+    local session_num=$1
+    local prompt_file
+    prompt_file=$(make_temp)
+
+    if [ "$session_num" -gt 1 ] && [ -f "$NEXT_PROMPT_FILE" ]; then
+        # Use Claude Code's own handoff prompt
+        cp "$NEXT_PROMPT_FILE" "$prompt_file"
+    else
+        # First session or no handoff: use initial prompt
+        cat "$INITIAL_PROMPT" > "$prompt_file"
+
+        # Append PROGRESS.md if exists
+        if [ -f "$PROGRESS_FILE" ]; then
+            echo "" >> "$prompt_file"
+            echo "--- PROGRESS FROM PRIOR SESSIONS ---" >> "$prompt_file"
+            cat "$PROGRESS_FILE" >> "$prompt_file"
+        fi
+    fi
+
+    # Always append KNOWLEDGE.md reference
+    if [ -f "$KNOWLEDGE_FILE" ] && [ "$(wc -l < "$KNOWLEDGE_FILE" | tr -d ' ')" -gt 10 ]; then
+        echo "" >> "$prompt_file"
+        echo "--- ACCUMULATED KNOWLEDGE ---" >> "$prompt_file"
+        echo "Read \`.cleave/KNOWLEDGE.md\` for tips and patterns from prior sessions." >> "$prompt_file"
+    fi
+
+    # Always append handoff instructions
+    build_handoff_instructions >> "$prompt_file"
+
+    echo "$prompt_file"
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}╔══════════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║  ${CYAN}cleave${NC} ${DIM}v${VERSION}${NC}${BOLD}                                  ║${NC}"
+echo -e "${BOLD}║  ${DIM}Infinite context for Claude Code${NC}${BOLD}                    ║${NC}"
+echo -e "${BOLD}╠══════════════════════════════════════════════════════╣${NC}"
+echo -e "${BOLD}║${NC}  Work dir:     ${BLUE}$(basename "$WORK_DIR")${NC}"
+echo -e "${BOLD}║${NC}  Max sessions: ${BLUE}$MAX_SESSIONS${NC}"
+echo -e "${BOLD}║${NC}  Git commit:   ${BLUE}$GIT_COMMIT${NC}"
+echo -e "${BOLD}║${NC}  Notifications:${BLUE} $NOTIFY${NC}"
+if [ -n "$VERIFY_CMD" ]; then
+echo -e "${BOLD}║${NC}  Verify cmd:   ${BLUE}$VERIFY_CMD${NC}"
+fi
+if [ "$SUBAGENT_HINT" = true ]; then
+echo -e "${BOLD}║${NC}  Subagents:    ${BLUE}enabled${NC}"
+fi
+if [ "$SKIP_PERMISSIONS" = false ]; then
+echo -e "${BOLD}║${NC}  Safe mode:    ${YELLOW}ON (permission prompts enabled)${NC}"
+fi
+if [ "$RESUME_FROM" -gt 0 ]; then
+echo -e "${BOLD}║${NC}  Resume from:  ${YELLOW}session #$RESUME_FROM${NC}"
+fi
+echo -e "${BOLD}╚══════════════════════════════════════════════════════╝${NC}"
+echo ""
+
+log_msg "${DIM}cleave started${NC}"
+log_msg "${DIM}Initial prompt: $INITIAL_PROMPT${NC}"
+log_msg "${DIM}Work dir: $WORK_DIR${NC}"
+
+# ── Main relay loop ───────────────────────────────────────────────────────────
+SESSION_COUNT=$RESUME_FROM
+CONSECUTIVE_FAILURES=0
+SESSION_OUTPUT=$(make_temp)
+
+while [ $SESSION_COUNT -lt $MAX_SESSIONS ]; do
+    SESSION_COUNT=$((SESSION_COUNT + 1))
+
+    # ── Check completion ──
+    if check_and_exit_if_complete $((SESSION_COUNT - 1)); then
+        exit 0
+    fi
+
+    # ── Check for loops ──
+    if check_for_loop $SESSION_COUNT; then
+        CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
+        if [ $CONSECUTIVE_FAILURES -ge 3 ]; then
+            log_msg "${RED}❌ 3 consecutive loops detected. Stopping to prevent waste.${NC}"
+            write_status $SESSION_COUNT "stuck" "Loop detected 3 times"
+            send_notification "cleave ❌" "Stopped: agent stuck in a loop. Check logs."
+            exit 2
+        fi
+        log_msg "${YELLOW}  Continuing despite loop (attempt $CONSECUTIVE_FAILURES of 3)...${NC}"
+    else
+        CONSECUTIVE_FAILURES=0
+    fi
+
+    # ── Build prompt ──
+    compact_knowledge
+    PROMPT_FILE=$(build_session_prompt $SESSION_COUNT)
+
+    echo ""
+    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    log_msg "${BOLD}SESSION #${SESSION_COUNT}${NC} of ${MAX_SESSIONS}"
+    if [ "$VERBOSE" = true ]; then
+        log_msg "${DIM}Prompt: $(wc -c < "$PROMPT_FILE" | tr -d ' ') bytes${NC}"
+    fi
+    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    write_status $SESSION_COUNT "running" "Session #$SESSION_COUNT active"
+
+    # Archive prompt
+    cp "$PROMPT_FILE" "$LOG_DIR/session_${SESSION_COUNT}_prompt.md" 2>/dev/null
+
+    # ── Launch Claude Code ──
+    cd "$WORK_DIR" || { log_msg "${RED}Cannot cd to $WORK_DIR${NC}"; exit 1; }
+    CLAUDE_FLAGS=""
+    [ "$SKIP_PERMISSIONS" = true ] && CLAUDE_FLAGS="--dangerously-skip-permissions"
+    cat "$PROMPT_FILE" | claude ${CLAUDE_FLAGS:+"$CLAUDE_FLAGS"} 2>&1 | tee "$SESSION_OUTPUT"
+
+    EXIT_CODE=${PIPESTATUS[1]:-$?}
+    log_msg "${DIM}Session #${SESSION_COUNT} exited (code: $EXIT_CODE)${NC}"
+
+    # ── Check for rate limits ──
+    if check_and_wait_for_rate_limit $EXIT_CODE "$SESSION_OUTPUT"; then
+        log_msg "${GREEN}Rate limit cleared. Retrying session #${SESSION_COUNT}...${NC}"
+        SESSION_COUNT=$((SESSION_COUNT - 1))  # Retry this session
+        continue
+    fi
+
+    # ── Check for in-stream completion signal (Ralph Wiggum pattern) ──
+    if [ -f "$SESSION_OUTPUT" ]; then
+        if grep -q "TASK_FULLY_COMPLETE" "$SESSION_OUTPUT" 2>/dev/null; then
+            log_msg "${GREEN}✅ Agent signaled TASK_FULLY_COMPLETE in output stream${NC}"
+            # Still archive and verify, but mark as potentially done
+        fi
+    fi
+
+    # ── Run verification command if provided (Ralph Wiggum philosophy) ──
+    if run_verification; then
+        log_msg "${GREEN}✅ Verification passed — task objectively complete!${NC}"
+        write_status $SESSION_COUNT "verified_complete" "Verification passed"
+        send_notification "cleave ✅" "Task verified complete after $SESSION_COUNT sessions!"
+        git_commit_session $SESSION_COUNT
+        exit 0
+    fi
+
+    # ── Archive outputs ──
+    [ -f "$PROGRESS_FILE" ] && cp "$PROGRESS_FILE" "$LOG_DIR/session_${SESSION_COUNT}_progress.md"
+    [ -f "$NEXT_PROMPT_FILE" ] && cp "$NEXT_PROMPT_FILE" "$LOG_DIR/session_${SESSION_COUNT}_next_prompt.md"
+    [ -f "$KNOWLEDGE_FILE" ] && cp "$KNOWLEDGE_FILE" "$LOG_DIR/session_${SESSION_COUNT}_knowledge.md"
+
+    # ── Git commit ──
+    git_commit_session $SESSION_COUNT
+
+    # ── Report ──
+    if [ -f "$NEXT_PROMPT_FILE" ]; then
+        local_size=$(wc -c < "$NEXT_PROMPT_FILE" | tr -d ' ')
+        log_msg "${GREEN}Handoff received${NC} ${DIM}(${local_size} bytes)${NC}"
+    else
+        log_msg "${YELLOW}⚠️  No NEXT_PROMPT.md — will use initial prompt + PROGRESS.md${NC}"
+    fi
+
+    if [ -f "$KNOWLEDGE_FILE" ]; then
+        knowledge_lines=$(wc -l < "$KNOWLEDGE_FILE" | tr -d ' ')
+        log_msg "${DIM}Knowledge base: ${knowledge_lines} lines${NC}"
+    fi
+
+    # ── Check completion ──
+    if check_and_exit_if_complete $SESSION_COUNT; then
+        exit 0
+    fi
+
+    write_status $SESSION_COUNT "paused" "Between sessions"
+
+    # ── Pause ──
+    if [ $SESSION_COUNT -lt $MAX_SESSIONS ]; then
+        log_msg "${DIM}Next session in ${PAUSE_SECONDS}s...${NC}"
+        sleep "$PAUSE_SECONDS"
+    fi
+done
+
+echo ""
+log_msg "${YELLOW}⚠️  Reached max sessions ($MAX_SESSIONS). Task not yet complete.${NC}"
+log_msg "${DIM}Run again to continue — picks up from last handoff.${NC}"
+log_msg "${DIM}Or: cleave --resume-from $SESSION_COUNT -m $((MAX_SESSIONS + 10)) $INITIAL_PROMPT${NC}"
+write_status $SESSION_COUNT "max_sessions" "Stopped at session limit"
+send_notification "cleave ⚠️" "Reached $MAX_SESSIONS sessions. Task incomplete."
+exit 1

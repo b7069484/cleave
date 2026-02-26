@@ -1,0 +1,20 @@
+{
+  "name": "cleave",
+  "version": "3.0.0",
+  "description": "Infinite context for Claude Code. Chain sessions together automatically — each session writes its own continuation prompt, accumulates knowledge, and hands off seamlessly.",
+  "author": {
+    "name": "Israel",
+    "url": "https://github.com/cleave-plugin"
+  },
+  "license": "MIT",
+  "keywords": [
+    "relay",
+    "session",
+    "context",
+    "handoff",
+    "infinite",
+    "continuation",
+    "long-running"
+  ],
+  "hooks": "./hooks/hooks.json"
+}
