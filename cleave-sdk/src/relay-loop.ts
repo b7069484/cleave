@@ -22,6 +22,8 @@ import {
   initRelayDir,
   touchSessionStart,
   cleanupRelay,
+  resetForContinuation,
+  readSessionCount,
 } from './state/files';
 import { compactKnowledge } from './state/knowledge';
 import { writeStatus, SessionStatus } from './state/status';
@@ -83,8 +85,13 @@ async function handleRateLimit(
 export async function runRelayLoop(config: CleaveConfig): Promise<void> {
   const paths: RelayPaths = resolvePaths(config.workDir);
 
-  // Initialize relay directory
-  initRelayDir(paths);
+  // Initialize relay directory (skip for continuations — preserve existing state)
+  if (!config.isContinuation) {
+    initRelayDir(paths);
+  } else {
+    // Just ensure logs dir exists and mark active
+    fs.mkdirSync(paths.logsDir, { recursive: true });
+  }
 
   // Initialize logger
   logger.init(paths.relayDir, config.verbose);
@@ -111,7 +118,18 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
   process.on('SIGINT', () => { cleanup(); process.exit(130); });
   process.on('SIGTERM', () => { cleanup(); process.exit(143); });
 
-  let sessionCount = config.resumeFrom;
+  // ── Handle continuation mode ──
+  let sessionCount: number;
+  if (config.isContinuation && config.continuePrompt) {
+    const prevCount = readSessionCount(paths);
+    sessionCount = prevCount; // Will be incremented to prevCount+1 at top of loop
+    logger.info(`Continuing from session #${prevCount} — injecting new task`);
+    resetForContinuation(paths, config.continuePrompt, prevCount);
+    logger.success(`State reset for continuation. PROGRESS.md → IN_PROGRESS`);
+  } else {
+    sessionCount = config.resumeFrom;
+  }
+
   let consecutiveFailures = 0;
 
   while (sessionCount < config.maxSessions) {

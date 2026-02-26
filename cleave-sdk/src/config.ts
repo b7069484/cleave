@@ -53,6 +53,12 @@ export interface CleaveConfig {
 
   /** Show the full Claude Code TUI (default: true). False = headless query() mode. */
   tui: boolean;
+
+  /** Whether this is a continuation of a previously completed relay */
+  isContinuation: boolean;
+
+  /** The continuation prompt text (inline or from file) */
+  continuePrompt: string | null;
 }
 
 export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
@@ -72,6 +78,8 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   knowledgeKeepSessions: 5,
   rateLimitMaxWait: 18000,
   tui: true,
+  isContinuation: false,
+  continuePrompt: null,
 };
 
-export const VERSION = '4.1.0';
+export const VERSION = '4.2.0';

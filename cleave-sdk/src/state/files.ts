@@ -113,6 +113,90 @@ export function checkHandoffFiles(paths: RelayPaths): { missing: string[]; stale
 }
 
 /**
+ * Reset state for a continuation relay.
+ * Archives current progress, rewrites PROGRESS.md as IN_PROGRESS,
+ * writes the continuation prompt to NEXT_PROMPT.md, preserves KNOWLEDGE.md.
+ */
+export function resetForContinuation(
+  paths: RelayPaths,
+  continuePrompt: string,
+  currentSessionCount: number
+): void {
+  // Archive current PROGRESS.md before overwriting
+  if (fs.existsSync(paths.progressFile)) {
+    const archivePath = path.join(paths.logsDir, 'pre_continuation_PROGRESS.md');
+    fs.copyFileSync(paths.progressFile, archivePath);
+  }
+
+  // Read existing progress for context
+  let previousWork = '';
+  if (fs.existsSync(paths.progressFile)) {
+    previousWork = fs.readFileSync(paths.progressFile, 'utf8');
+  }
+
+  // Rewrite PROGRESS.md with continuation status
+  const now = new Date().toISOString();
+  fs.writeFileSync(paths.progressFile, `# Relay Progress
+
+STATUS: IN_PROGRESS
+
+## Continuation (started ${now})
+
+### New Task
+${continuePrompt}
+
+### Previous Work Summary
+${previousWork.replace(/^STATUS:.*$/m, 'STATUS: COMPLETED (prior relay)').trim()}
+`);
+
+  // Write NEXT_PROMPT.md so the next session picks up the continuation task
+  let knowledgeRef = '';
+  if (fs.existsSync(paths.knowledgeFile)) {
+    const kLines = fs.readFileSync(paths.knowledgeFile, 'utf8').split('\n').length;
+    if (kLines > 10) {
+      knowledgeRef = `\n\nIMPORTANT: Read .cleave/KNOWLEDGE.md — it contains ${kLines} lines of accumulated knowledge from prior sessions.\n`;
+    }
+  }
+
+  fs.writeFileSync(paths.nextPromptFile, `# Continuation Task
+
+You are continuing a Cleave relay. The previous relay completed successfully.
+Your job now is to execute the following new task, building on the prior work.
+${knowledgeRef}
+## New Task
+
+${continuePrompt}
+
+## Context
+
+Read .cleave/PROGRESS.md for a summary of what was accomplished in the prior relay.
+All prior files, spreadsheets, and outputs are still in the working directory.
+Do NOT redo work that was already completed — build on it.
+
+## When Done
+
+Update .cleave/PROGRESS.md with your results. If the task is fully complete,
+set STATUS: ALL_COMPLETE. If you're running low on context, perform the standard
+Cleave handoff procedure (update PROGRESS.md, KNOWLEDGE.md, and NEXT_PROMPT.md).
+`);
+
+  // Update session counter to continue from where we left off
+  fs.writeFileSync(paths.sessionCountFile, String(currentSessionCount));
+
+  // Re-mark as active relay
+  fs.writeFileSync(paths.activeRelayMarker, '1');
+}
+
+/**
+ * Read the current session count from .cleave/.session_count.
+ */
+export function readSessionCount(paths: RelayPaths): number {
+  if (!fs.existsSync(paths.sessionCountFile)) return 0;
+  const val = parseInt(fs.readFileSync(paths.sessionCountFile, 'utf8').trim(), 10);
+  return isNaN(val) ? 0 : val;
+}
+
+/**
  * Clean up relay markers on exit.
  */
 export function cleanupRelay(paths: RelayPaths): void {

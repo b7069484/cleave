@@ -48,6 +48,10 @@ export function generateSettingsFile(relayDir: string): string {
     logger.warn(`SessionStart hook script not found: ${startScript}`);
   }
 
+  // Quote paths to handle spaces in directory names (e.g., "Cleave Code")
+  const quotedStopScript = `"${stopScript}"`;
+  const quotedStartScript = `"${startScript}"`;
+
   const settings = {
     hooks: {
       Stop: [
@@ -55,7 +59,7 @@ export function generateSettingsFile(relayDir: string): string {
           hooks: [
             {
               type: 'command',
-              command: stopScript,
+              command: quotedStopScript,
               timeout: 10,
             },
           ],
@@ -66,7 +70,7 @@ export function generateSettingsFile(relayDir: string): string {
           hooks: [
             {
               type: 'command',
-              command: startScript,
+              command: quotedStartScript,
               timeout: 5,
             },
           ],
