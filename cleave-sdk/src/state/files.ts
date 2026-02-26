@@ -113,7 +113,9 @@ Recent session notes (auto-pruned to last 5 sessions by the relay script).
 
   // Mark as active relay
   fs.writeFileSync(paths.activeRelayMarker, '1');
-  fs.writeFileSync(paths.sessionCountFile, '0');
+  if (!fs.existsSync(paths.sessionCountFile)) {
+    fs.writeFileSync(paths.sessionCountFile, '0');
+  }
 }
 
 /** Initialize pipeline directory with stage subdirectories. */

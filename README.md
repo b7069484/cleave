@@ -248,6 +248,14 @@ Each session uses API tokens. An Opus session can cost $5–15+. A 15-session re
 - Always set `--max-sessions` to a reasonable cap
 - Start with 3–5 sessions to test before going to 15+
 
+### Branching Policy
+
+**Never push directly to `main`.** All changes go through pull requests:
+- Create a feature or fix branch (e.g., `fix/relay-exit`, `feat/pipeline-verify`)
+- Push to the branch and open a PR into `main`
+- Merge only when all tests pass and there are no conflicts
+- This applies to both human and AI-authored changes
+
 ### Destructive Commands
 
 `--dangerously-skip-permissions` means Claude can run any command.

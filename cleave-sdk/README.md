@@ -4,6 +4,10 @@
 
 Claude Code sessions are limited by context windows. When context fills up, the agent loses track of what it was doing. Cleave solves this by orchestrating a **relay** of sessions: each session writes its own continuation prompt, updates a shared knowledge base, and hands off to the next session seamlessly. The result is an agent that can work through tasks of arbitrary complexity without losing context.
 
+## Contributing
+
+**Never push directly to `main`.** All changes must go through pull requests. Create a feature/fix branch, open a PR into `main`, and only merge when all tests pass and there are no conflicts.
+
 ## Installation
 
 ```bash

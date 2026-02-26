@@ -17,6 +17,15 @@ developer-tools, bash, cli, open-source, agentic-coding
 
 ---
 
+## Branching Policy
+
+**Never push directly to `main`.** All changes — whether human or AI-authored — must go through pull requests:
+1. Create a feature or fix branch (`git checkout -b fix/your-fix-name`)
+2. Push to the branch and open a PR into `main`
+3. Merge only when all tests pass and there are no conflicts
+
+---
+
 ## How to Create the GitHub Repo from the Zip
 
 ### Step 1: Extract and enter the folder

@@ -18,6 +18,7 @@ import {
   loadPipelineState,
   promoteToSharedKnowledge,
   resetStageForRetry,
+  readSessionCount,
   PipelineState,
 } from './state/files';
 import { runRelayCore, RelayCoreResult } from './relay-loop';
@@ -70,6 +71,9 @@ export async function runPipelineLoop(config: CleaveConfig): Promise<void> {
     logger.error(`Error: another cleave session is already running in ${workDir}`);
     process.exit(1);
   }
+
+  // Write active pipeline marker (so the stop hook detects pipeline mode)
+  fs.writeFileSync(path.join(pipelineDir, '.active_pipeline'), '1');
 
   // Cleanup on exit — prevent double-cleanup with flag
   let cleaned = false;
@@ -332,7 +336,7 @@ async function runStage(
   const result = await runRelayCore({
     paths: stagePaths,
     config: stageConfig,
-    startSession: 0,
+    startSession: readSessionCount(stagePaths),
     maxSessions: stage.maxSessions,
     completionMarker: stage.completion,
     verifyCommand: stage.verify || null,

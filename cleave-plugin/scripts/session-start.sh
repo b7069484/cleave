@@ -1,34 +1,48 @@
-#!/bin/bash
-# ─────────────────────────────────────────────────────────────────────────────
-# Cleave Session Start Hook — Timestamps session start for handoff verification
-# ─────────────────────────────────────────────────────────────────────────────
+#!/usr/bin/env bash
+# Cleave SDK — SessionStart hook
 #
-# Creates a timestamp marker so the Stop hook can verify that handoff files
-# were actually updated during this session (not leftover from a prior one).
-# ─────────────────────────────────────────────────────────────────────────────
+# Touches the .session_start marker so the Stop hook knows which files
+# were written THIS session vs a prior one.
+#
+# v5.1: Also touches .session_start in active pipeline stage directories.
+# Input: JSON on stdin with session info
+# Exit:  Always 0 (never block session start)
 
-set -euo pipefail
+INPUT=$(cat 2>/dev/null || true)
 
-INPUT=$(cat)
-CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd',''))" 2>/dev/null || echo "")
-
-if [ -z "$CWD" ]; then
-    exit 0
+# Parse CWD from JSON using pure bash
+CWD=""
+if [ -n "$INPUT" ]; then
+  CWD=$(echo "$INPUT" | grep -oE '"cwd"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"cwd"\s*:\s*"//;s/"$//')
+  if [ -z "$CWD" ]; then
+    CWD=$(echo "$INPUT" | grep -oE '"workingDir"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"workingDir"\s*:\s*"//;s/"$//')
+  fi
 fi
 
-RELAY_DIR="$CWD/.cleave"
+# Fallback: env vars
+if [ -z "$CWD" ]; then
+  CWD="${CLEAVE_WORK_DIR:-${PWD:-}}"
+fi
 
-# Only act if this is a cleave relay session
-if [ -d "$RELAY_DIR" ] && [ -f "$RELAY_DIR/.active_relay" ]; then
-    # Touch the session start marker
-    touch "$RELAY_DIR/.session_start"
+if [ -z "$CWD" ]; then
+  exit 0
+fi
 
-    # Increment session counter
-    COUNTER_FILE="$RELAY_DIR/.session_count"
-    if [ -f "$COUNTER_FILE" ]; then
-        COUNT=$(cat "$COUNTER_FILE" 2>/dev/null || echo "0")
-        echo $((COUNT + 1)) > "$COUNTER_FILE"
-    fi
+CLEAVE_DIR="$CWD/.cleave"
+
+if [ -d "$CLEAVE_DIR" ]; then
+  # Touch the root-level marker (for standard relays)
+  touch "$CLEAVE_DIR/.session_start" 2>/dev/null || true
+
+  # Also touch .session_start in any active pipeline stage directories
+  # The pipeline loop creates these dirs before spawning sessions
+  if [ -d "$CLEAVE_DIR/stages" ]; then
+    for STAGE_DIR in "$CLEAVE_DIR/stages"/*/; do
+      if [ -d "$STAGE_DIR" ] && [ -f "${STAGE_DIR}.active_relay" ]; then
+        touch "${STAGE_DIR}.session_start" 2>/dev/null || true
+      fi
+    done
+  fi
 fi
 
 exit 0

@@ -120,7 +120,7 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   skipStage: null,
 };
 
-export const VERSION = '5.0.0';
+export const VERSION = '5.1.0';
 
 /**
  * Validate config values at startup. Throws on invalid values.

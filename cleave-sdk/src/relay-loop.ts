@@ -110,15 +110,30 @@ export async function runRelayCore(opts: RelayCoreOptions): Promise<RelayCoreRes
     }
 
     // ── Compact knowledge ──
-    const compactResult = compactKnowledge(paths.knowledgeFile, config.knowledgeKeepSessions);
-    if (compactResult.pruned) {
-      logger.debug(`Knowledge compacted: ${compactResult.oldLines} → ${compactResult.newLines} lines`);
+    try {
+      const compactResult = compactKnowledge(paths.knowledgeFile, config.knowledgeKeepSessions);
+      if (compactResult.pruned) {
+        logger.debug(`Knowledge compacted: ${compactResult.oldLines} → ${compactResult.newLines} lines`);
+      }
+    } catch (err: any) {
+      logger.warn(`${label}⚠️  Knowledge compaction failed (non-fatal): ${err.message}`);
     }
 
     // ── Build prompt ──
-    const prompt = opts.buildPrompt
-      ? opts.buildPrompt(config, sessionCount)
-      : config.tui ? buildTaskPrompt(config, sessionCount) : buildSessionPrompt(config, sessionCount);
+    let prompt: string;
+    try {
+      prompt = opts.buildPrompt
+        ? opts.buildPrompt(config, sessionCount)
+        : config.tui ? buildTaskPrompt(config, sessionCount) : buildSessionPrompt(config, sessionCount);
+    } catch (err: any) {
+      logger.error(`${label}Prompt build failed for session #${sessionCount}: ${err.message}`);
+      consecutiveCrashes++;
+      if (consecutiveCrashes >= 3) {
+        logger.error(`${label}❌ 3 consecutive failures (prompt build). Stopping.`);
+        return { completed: false, maxSessionsReached: false, sessionsRun: sessionCount - opts.startSession, lastSession: sessionCount };
+      }
+      continue;
+    }
 
     // ── Session header ──
     logger.session(sessionCount, opts.maxSessions);
