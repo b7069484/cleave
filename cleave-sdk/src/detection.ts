@@ -12,14 +12,19 @@ import { logger } from './utils/logger';
 
 /**
  * Check if the task is complete by looking for the marker in PROGRESS.md.
- * Searches the first 10 lines, case-insensitive.
+ * Searches the full file content, case-insensitive.
+ * Also checks for common completion patterns like "STATUS: <marker>".
  */
 export function isComplete(progressPath: string, marker: string): boolean {
   try {
     if (!fs.existsSync(progressPath)) return false;
-    const content = fs.readFileSync(progressPath, 'utf8');
-    const firstLines = content.split('\n').slice(0, 10).join('\n');
-    return firstLines.toLowerCase().includes(marker.toLowerCase());
+    const content = fs.readFileSync(progressPath, 'utf8').toLowerCase();
+    const markerLower = marker.toLowerCase();
+    // Check for the marker anywhere in the file
+    if (content.includes(markerLower)) return true;
+    // Also check for TASK_FULLY_COMPLETE as a universal completion signal
+    if (content.includes('task_fully_complete')) return true;
+    return false;
   } catch {
     return false; // Can't read → not complete
   }

@@ -72,6 +72,7 @@ function validateAndBuildConfig(opts: any, program: Command): Partial<CleaveConf
 
 export function parseArgs(argv: string[]): CleaveConfig {
   const program = new Command();
+  let result: CleaveConfig | null = null;
 
   program
     .name('cleave')
@@ -84,7 +85,10 @@ export function parseArgs(argv: string[]): CleaveConfig {
     .description('Start a new relay from a prompt file');
 
   addSharedOptions(runCmd)
-    .option('-r, --resume-from <n>', 'Resume from session N', String(DEFAULT_CONFIG.resumeFrom));
+    .option('-r, --resume-from <n>', 'Resume from session N', String(DEFAULT_CONFIG.resumeFrom))
+    .action((_promptFile: string, _opts: any, cmd: Command) => {
+      result = parseRunCommand(cmd, program);
+    });
 
   // ── "continue" subcommand ──
   const continueCmd = program
@@ -92,7 +96,10 @@ export function parseArgs(argv: string[]): CleaveConfig {
     .description('Continue a completed relay with a new prompt');
 
   addSharedOptions(continueCmd)
-    .option('-f, --file <path>', 'Read continuation prompt from a file instead of inline');
+    .option('-f, --file <path>', 'Read continuation prompt from a file instead of inline')
+    .action((_prompt: string, _opts: any, cmd: Command) => {
+      result = parseContinueCommand(cmd, program);
+    });
 
   // ── "pipeline" subcommand ──
   const pipelineCmd = program
@@ -101,24 +108,19 @@ export function parseArgs(argv: string[]): CleaveConfig {
 
   addSharedOptions(pipelineCmd)
     .option('--resume-stage <name>', 'Resume pipeline from a specific stage')
-    .option('--skip-stage <name>', 'Skip a specific stage in the pipeline');
+    .option('--skip-stage <name>', 'Skip a specific stage in the pipeline')
+    .action((_configYaml: string, _opts: any, cmd: Command) => {
+      result = parsePipelineCommand(cmd, program);
+    });
 
   // Parse
   program.parse(argv);
 
-  // Determine which subcommand was invoked
-  const activeCmd = (program as any)._activeCommand;
-
-  if (activeCmd && activeCmd.name() === 'continue') {
-    return parseContinueCommand(activeCmd, program);
+  if (!result) {
+    program.error('Error: no command matched. Run "cleave --help" for usage.');
   }
 
-  if (activeCmd && activeCmd.name() === 'pipeline') {
-    return parsePipelineCommand(activeCmd, program);
-  }
-
-  // Default: "run" command
-  return parseRunCommand(activeCmd || runCmd, program);
+  return result!;
 }
 
 function parseRunCommand(cmd: Command, program: Command): CleaveConfig {

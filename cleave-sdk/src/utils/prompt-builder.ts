@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CleaveConfig } from '../config';
+import { logger } from './logger';
 
 /**
  * Build the handoff instructions block.
@@ -28,8 +29,19 @@ predictably: 0-30% = peak quality, 50%+ = declining, 70%+ = errors/hallucination
   This is structured/formulaic output — quality holds fine here.
 - **${config.handoffDeadline}%+** — DANGER. Never reach this. Quality collapses.
 
+**50% CHECKPOINT — MANDATORY SELF-ASSESSMENT:**
+When you estimate you've used ~50% of your context window, STOP and do this calculation:
+1. How much work remains? (e.g., "60 more images" or "30 more modules")
+2. How much context did the work so far consume? (e.g., "50% for 80 images")
+3. Will the remaining work fit in the remaining ~20% budget (before ${config.handoffThreshold}%)?
+4. **If NO** — STOP IMMEDIATELY and begin the handoff procedure. Do NOT continue working.
+5. **If YES** — continue, but monitor closely. Stop at ${config.handoffThreshold}% regardless.
+
+This checkpoint is MANDATORY. Do not skip it. The relay system will start a new session
+to continue your work — your job is clean progress and clean handoffs, NOT finishing everything.
+
 When you estimate you've used ~${config.handoffThreshold}% of your context window, STOP working
-and execute the handoff procedure immediately.
+and execute the handoff procedure immediately, even if you are in the middle of a batch or task.
 
 **STEP 1 — Update \`.cleave/PROGRESS.md\`:**
 - STATUS: either \`IN_PROGRESS\` or \`${config.completionMarker}\`
@@ -82,7 +94,25 @@ function buildBasePrompt(config: CleaveConfig, sessionNum: number): string {
   let prompt: string;
 
   if (sessionNum > 1 && fs.existsSync(nextPromptFile)) {
-    prompt = fs.readFileSync(nextPromptFile, 'utf8');
+    const nextContent = fs.readFileSync(nextPromptFile, 'utf8').trim();
+    if (nextContent.length > 0) {
+      prompt = nextContent;
+      logger.debug(`Session ${sessionNum}: using NEXT_PROMPT.md (${nextContent.length} chars)`);
+    } else {
+      // NEXT_PROMPT.md exists but is empty — fall back with warning
+      logger.warn(`⚠️  NEXT_PROMPT.md is empty for session ${sessionNum} — falling back to initial prompt + PROGRESS.md`);
+      prompt = fs.readFileSync(config.initialPromptFile, 'utf8');
+      if (fs.existsSync(progressFile)) {
+        prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${fs.readFileSync(progressFile, 'utf8')}`;
+      }
+    }
+  } else if (sessionNum > 1) {
+    // NEXT_PROMPT.md missing entirely — fall back with warning
+    logger.warn(`⚠️  No NEXT_PROMPT.md for session ${sessionNum} — falling back to initial prompt + PROGRESS.md`);
+    prompt = fs.readFileSync(config.initialPromptFile, 'utf8');
+    if (fs.existsSync(progressFile)) {
+      prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${fs.readFileSync(progressFile, 'utf8')}`;
+    }
   } else {
     prompt = fs.readFileSync(config.initialPromptFile, 'utf8');
     if (fs.existsSync(progressFile)) {

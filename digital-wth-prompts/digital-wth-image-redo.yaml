@@ -1,0 +1,35 @@
+name: digital-wth-image-redo
+stages:
+  - name: audit-images
+    prompt: prompts/01-audit-images.md
+    maxSessions: 10
+    completion: IMAGE_AUDIT_COMPLETE
+
+  - name: fix-mappings
+    prompt: prompts/02-fix-mappings.md
+    maxSessions: 15
+    completion: MAPPINGS_FIXED
+    requires: [audit-images]
+
+  - name: fix-loader
+    prompt: prompts/03-fix-loader.md
+    maxSessions: 5
+    completion: LOADER_FIXED
+    requires: [fix-mappings]
+
+  - name: fix-videos
+    prompt: prompts/04-fix-videos.md
+    maxSessions: 5
+    completion: VIDEOS_FIXED
+
+  - name: fix-previews
+    prompt: prompts/05-fix-previews.md
+    maxSessions: 5
+    completion: PREVIEWS_FIXED
+    requires: [fix-mappings]
+
+  - name: verify
+    prompt: prompts/06-verify.md
+    maxSessions: 5
+    completion: ALL_VERIFIED
+    requires: [fix-mappings, fix-videos, fix-previews, fix-loader]

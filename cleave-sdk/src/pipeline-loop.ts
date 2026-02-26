@@ -275,7 +275,23 @@ async function runStage(
 
     // Check if there's a NEXT_PROMPT.md from a previous session in this stage
     if (sessionNum > 1 && fs.existsSync(stagePaths.nextPromptFile)) {
-      prompt = fs.readFileSync(stagePaths.nextPromptFile, 'utf8');
+      const nextContent = fs.readFileSync(stagePaths.nextPromptFile, 'utf8').trim();
+      if (nextContent.length > 0) {
+        prompt = nextContent;
+        logger.debug(`Stage "${stage.name}" session ${sessionNum}: using NEXT_PROMPT.md (${nextContent.length} chars)`);
+      } else {
+        logger.warn(`⚠️  Stage "${stage.name}": NEXT_PROMPT.md is empty for session ${sessionNum} — falling back to stage prompt + PROGRESS.md`);
+        prompt = fs.readFileSync(stage.prompt, 'utf8');
+        if (fs.existsSync(stagePaths.progressFile)) {
+          prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${fs.readFileSync(stagePaths.progressFile, 'utf8')}`;
+        }
+      }
+    } else if (sessionNum > 1) {
+      logger.warn(`⚠️  Stage "${stage.name}": no NEXT_PROMPT.md for session ${sessionNum} — falling back to stage prompt + PROGRESS.md`);
+      prompt = fs.readFileSync(stage.prompt, 'utf8');
+      if (fs.existsSync(stagePaths.progressFile)) {
+        prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${fs.readFileSync(stagePaths.progressFile, 'utf8')}`;
+      }
     } else {
       // First session: read the stage's initial prompt
       prompt = fs.readFileSync(stage.prompt, 'utf8');
