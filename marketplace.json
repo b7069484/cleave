@@ -1,0 +1,15 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/anthropics/claude-code@main/plugins/marketplace.schema.json",
+  "name": "cleave-marketplace",
+  "description": "Plugins for infinite context and session relay in Claude Code",
+  "plugins": [
+    {
+      "name": "cleave",
+      "description": "Chain Claude Code sessions together automatically — self-authored handoffs, knowledge accumulation, enforced handoff hooks",
+      "version": "3.0.0",
+      "path": "cleave-plugin",
+      "keywords": ["relay", "session", "context", "handoff", "infinite"],
+      "author": "Israel"
+    }
+  ]
+}
