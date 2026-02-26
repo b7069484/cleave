@@ -1,2 +1,21 @@
 # Cleave state (local to each machine)
 .cleave/
+
+# Build output (compiled from src/)
+cleave-sdk/dist/
+
+# Dependencies
+node_modules/
+
+# OS files
+.DS_Store
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Claude Code session data
+cleave-sdk/.claude/
+
+# Task prompt files (user-specific)
+finalize-cleave-sdk.md

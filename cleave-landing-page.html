@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cleave for Claude Code — Infinite Context, Three Editions</title>
+<meta name="description" content="Chain Claude Code sessions with self-authored handoffs, knowledge accumulation, enforced hooks, and full TUI visibility. Shell script, plugin, or SDK — pick your flavor.">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0b;
+  --surface: #111113;
+  --surface2: #18181b;
+  --border: #27272a;
+  --text: #fafafa;
+  --text-muted: #a1a1aa;
+  --text-dim: #71717a;
+  --accent: #f97316;
+  --accent-glow: #f9731620;
+  --green: #22c55e;
+  --green-dim: #22c55e30;
+  --blue: #3b82f6;
+  --blue-dim: #3b82f620;
+  --red: #ef4444;
+  --red-dim: #ef444420;
+  --purple: #a855f7;
+  --purple-dim: #a855f720;
+  --cyan: #06b6d4;
+  --cyan-dim: #06b6d420;
+  --yellow: #eab308;
+  --yellow-dim: #eab30820;
+  --mono: 'JetBrains Mono', monospace;
+  --serif: 'Instrument Serif', Georgia, serif;
+  --sans: 'DM Sans', system-ui, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.6; overflow-x: hidden; }
+body::before { content: ''; position: fixed; inset: 0; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"); pointer-events: none; z-index: 9999; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 0 2rem; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: var(--mono); font-size: 0.85em; background: var(--surface2); padding: 0.15em 0.4em; border-radius: 4px; }
+
+/* ── NAV ── */
+nav { padding: 1.5rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 100; backdrop-filter: blur(12px); }
+nav .logo { font-family: var(--mono); font-weight: 700; font-size: 1rem; color: var(--text); display: flex; align-items: center; gap: 0.5rem; }
+nav .logo span { color: var(--accent); }
+nav .links { display: flex; gap: 1.5rem; align-items: center; }
+nav .links a { color: var(--text-muted); font-size: 0.85rem; text-decoration: none; }
+nav .links a:hover { color: var(--text); }
+.gh-star { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.9rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: 0.8rem; color: var(--text); transition: all 0.2s; }
+.gh-star:hover { border-color: var(--accent); text-decoration: none; }
+.gh-star svg { width: 16px; height: 16px; fill: currentColor; }
+
+/* ── HERO ── */
+.hero { min-height: 90vh; display: flex; flex-direction: column; justify-content: center; padding: 4rem 2rem; position: relative; }
+.hero::after { content: ''; position: absolute; top: -20%; right: -10%; width: 600px; height: 600px; background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%); pointer-events: none; }
+.badge { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.9rem; background: var(--surface); border: 1px solid var(--border); border-radius: 100px; font-family: var(--mono); font-size: 0.7rem; color: var(--accent); letter-spacing: 0.05em; text-transform: uppercase; width: fit-content; margin-bottom: 1.5rem; animation: fadeIn 0.8s ease; }
+.badge::before { content: ''; width: 6px; height: 6px; background: var(--green); border-radius: 50%; animation: pulse 2s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.hero h1 { font-family: var(--serif); font-size: clamp(3rem, 8vw, 6rem); font-weight: 400; line-height: 1.05; max-width: 850px; animation: fadeUp 1s ease; }
+.hero h1 em { font-style: italic; color: var(--accent); }
+.hero-sub { font-size: clamp(1.05rem, 2vw, 1.25rem); color: var(--text-muted); max-width: 650px; margin-top: 1.5rem; animation: fadeUp 1s ease 0.15s both; }
+.hero-actions { margin-top: 2.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; animation: fadeUp 1s ease 0.3s both; }
+.install-box { display: flex; align-items: center; gap: 0.75rem; padding: 0.85rem 1.4rem; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; font-family: var(--mono); font-size: 0.85rem; color: var(--green); cursor: pointer; transition: all 0.2s; position: relative; }
+.install-box:hover { border-color: var(--green); background: var(--green-dim); }
+.install-box .pr { color: var(--text-dim); user-select: none; }
+.install-box .hint { font-size: 0.65rem; color: var(--text-dim); font-family: var(--sans); position: absolute; right: -0.3rem; top: -0.5rem; background: var(--surface2); padding: 0.1rem 0.45rem; border-radius: 4px; border: 1px solid var(--border); opacity: 0; transition: opacity 0.2s; }
+.install-box:hover .hint { opacity: 1; }
+.primary-btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.85rem 1.6rem; background: var(--text); color: var(--bg); border-radius: 12px; font-weight: 600; font-size: 0.9rem; text-decoration: none; transition: all 0.2s; }
+.primary-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 24px rgba(255,255,255,0.1); text-decoration: none; }
+.primary-btn svg { width: 16px; height: 16px; }
+.version-tag { font-family: var(--mono); font-size: 0.7rem; color: var(--text-dim); margin-top: 1rem; animation: fadeUp 1s ease 0.45s both; }
+
+/* ── SECTION COMMONS ── */
+section { padding: 5rem 0; }
+.slabel { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.75rem; }
+.stitle { font-family: var(--serif); font-size: clamp(1.8rem, 4vw, 3.2rem); font-weight: 400; margin-bottom: 0.75rem; max-width: 700px; }
+.sdesc { color: var(--text-muted); max-width: 600px; margin-bottom: 2.5rem; font-size: 1rem; }
+
+/* ── EDITIONS ── */
+.editions-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; margin-bottom: 1rem; }
+.edition { padding: 2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; transition: all 0.3s; position: relative; overflow: hidden; }
+.edition:hover { border-color: var(--accent); transform: translateY(-3px); }
+.edition.recommended { border-color: var(--accent); box-shadow: 0 0 60px var(--accent-glow); }
+.edition.recommended::before { content: 'RECOMMENDED'; position: absolute; top: 1rem; right: -2rem; background: var(--accent); color: var(--bg); font-family: var(--mono); font-size: 0.55rem; font-weight: 700; letter-spacing: 0.1em; padding: 0.25rem 2.5rem; transform: rotate(45deg); }
+.edition .ver { font-family: var(--mono); font-size: 0.65rem; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.5rem; }
+.edition h3 { font-family: var(--serif); font-size: 1.6rem; font-weight: 400; margin-bottom: 0.4rem; }
+.edition .sub { font-size: 0.85rem; color: var(--accent); font-family: var(--mono); margin-bottom: 1rem; }
+.edition p { font-size: 0.84rem; color: var(--text-muted); line-height: 1.55; margin-bottom: 1rem; }
+.edition ul { list-style: none; margin-bottom: 1.2rem; }
+.edition ul li { font-size: 0.8rem; color: var(--text-muted); padding: 0.25rem 0; padding-left: 1.2rem; position: relative; }
+.edition ul li::before { content: ''; position: absolute; left: 0; top: 0.6rem; width: 6px; height: 6px; border-radius: 50%; }
+.edition ul li.pro::before { background: var(--green); }
+.edition ul li.con::before { background: var(--red); opacity: 0.5; }
+.edition ul li.note::before { background: var(--yellow); }
+.edition .install-cmd { font-family: var(--mono); font-size: 0.75rem; color: var(--green); background: var(--surface2); padding: 0.6rem 0.9rem; border-radius: 8px; border: 1px solid var(--border); overflow-x: auto; }
+
+/* ── FLOW ── */
+.flow-chain { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 1.5rem 0 2rem; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+.flow-node { min-width: 260px; max-width: 300px; padding: 1.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; flex-shrink: 0; }
+.flow-node.active { border-color: var(--accent); box-shadow: 0 0 40px var(--accent-glow); }
+.flow-node .num { font-family: var(--mono); font-size: 0.65rem; color: var(--text-dim); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 0.6rem; }
+.flow-node h3 { font-family: var(--serif); font-size: 1.3rem; font-weight: 400; margin-bottom: 0.4rem; }
+.flow-node p { font-size: 0.82rem; color: var(--text-muted); line-height: 1.5; }
+.flow-arrow { display: flex; align-items: center; justify-content: center; min-width: 50px; color: var(--text-dim); font-size: 1.4rem; flex-shrink: 0; }
+.flow-file { display: flex; align-items: center; flex-direction: column; justify-content: center; min-width: 160px; padding: 1.2rem; background: var(--green-dim); border: 1px dashed var(--green); border-radius: 10px; flex-shrink: 0; }
+.flow-file .fi { font-size: 1.3rem; margin-bottom: 0.4rem; }
+.flow-file .fn { font-family: var(--mono); font-size: 0.75rem; color: var(--green); }
+.flow-file .fd { font-size: 0.65rem; color: var(--text-dim); text-align: center; margin-top: 0.2rem; }
+.flow-file.know { background: var(--purple-dim); border-color: var(--purple); }
+.flow-file.know .fn { color: var(--purple); }
+
+/* ── FEATURES ── */
+.features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; }
+.fcard { padding: 1.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; transition: all 0.3s; }
+.fcard:hover { border-color: var(--accent); transform: translateY(-2px); }
+.fcard .ico { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; border-radius: 9px; font-size: 1.1rem; margin-bottom: 0.85rem; }
+.fcard h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.4rem; }
+.fcard p { font-size: 0.84rem; color: var(--text-muted); line-height: 1.5; }
+
+/* ── COMPARISON ── */
+.ctable { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; overflow-x: auto; }
+.ctable table { width: 100%; border-collapse: collapse; min-width: 650px; }
+.ctable th { text-align: left; padding: 0.85rem 1.2rem; font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); background: var(--surface); border-bottom: 1px solid var(--border); white-space: nowrap; }
+.ctable th.hl { color: var(--accent); background: var(--accent-glow); }
+.ctable td { padding: 0.75rem 1.2rem; font-size: 0.82rem; border-bottom: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
+.ctable tr:last-child td { border-bottom: none; }
+.ctable td:first-child { color: var(--text); font-weight: 500; }
+.ctable td.hl { background: var(--accent-glow); color: var(--green); font-weight: 500; }
+.ck { color: var(--green); } .cx { color: var(--red); opacity: 0.5; } .cp { color: var(--text-dim); }
+
+/* ── WARNINGS ── */
+.warn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+.wcard { padding: 1.4rem; border-radius: 11px; border: 1px solid; }
+.wcard.caution { background: #422006; border-color: #92400e; }
+.wcard.danger { background: #450a0a; border-color: #991b1b; }
+.wcard.info { background: #172554; border-color: #1e40af; }
+.wcard h4 { font-size: 0.9rem; margin-bottom: 0.4rem; }
+.wcard p { font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; }
+
+/* ── USE CASES ── */
+.cases { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+.case { display: flex; gap: 1.2rem; padding: 1.4rem; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.case .emo { font-size: 1.4rem; flex-shrink: 0; margin-top: 0.15rem; }
+.case h4 { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.25rem; }
+.case p { font-size: 0.8rem; color: var(--text-muted); }
+
+/* ── QUICKSTART ── */
+.steps { display: flex; flex-direction: column; gap: 2rem; max-width: 700px; }
+.step { display: flex; gap: 1.5rem; }
+.step-n { font-family: var(--serif); font-size: 2.3rem; color: var(--accent); line-height: 1; flex-shrink: 0; width: 40px; }
+.step-c h4 { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.3rem; }
+.step-c p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; }
+.codeblock { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; font-family: var(--mono); font-size: 0.78rem; color: var(--green); overflow-x: auto; margin-top: 0.4rem; line-height: 1.7; }
+
+/* ── CREDITS ── */
+.credits-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+.credit { padding: 1.2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.credit h4 { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; }
+.credit .what { font-size: 0.75rem; color: var(--accent); font-family: var(--mono); margin-bottom: 0.3rem; }
+.credit p { font-size: 0.78rem; color: var(--text-muted); line-height: 1.45; }
+
+/* ── FOOTER ── */
+footer { padding: 3.5rem 2rem; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; }
+footer .fl { font-family: var(--mono); font-size: 0.75rem; color: var(--text-dim); }
+footer .fr { display: flex; gap: 1.8rem; }
+footer .fr a { color: var(--text-muted); text-decoration: none; font-size: 0.8rem; }
+footer .fr a:hover { color: var(--accent); }
+
+/* ── ANIM ── */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 900px) {
+  .editions-grid { grid-template-columns: 1fr; }
+  .edition.recommended::before { display: none; }
+}
+@media (max-width: 768px) {
+  .flow-chain { flex-direction: column; align-items: stretch; }
+  .flow-arrow { transform: rotate(90deg); min-width: auto; padding: 0.4rem; }
+  footer { flex-direction: column; text-align: center; }
+  nav .links { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="logo"><span>&loz;</span> Cleave <span style="color:var(--text-dim);font-weight:400;font-size:0.8rem">for Claude Code</span></div>
+  <div class="links">
+    <a href="#editions">Editions</a>
+    <a href="#how">How it works</a>
+    <a href="#features">Features</a>
+    <a href="#comparison">Comparison</a>
+    <a href="#start">Quickstart</a>
+    <a href="https://github.com/b7069484/cleave" class="gh-star"><svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg> GitHub</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="wrap">
+    <div class="badge">v4.1 &middot; Open Source &middot; MIT</div>
+    <h1>Claude Code never <em>forgets</em> again.</h1>
+    <p class="hero-sub">Cleave chains Claude Code sessions with self-authored handoffs, compounding knowledge, enforced hooks, and full TUI visibility. Three editions: shell script, plugin, or SDK. Pick your flavor. Walk away and come back to finished work.</p>
+    <div class="hero-actions">
+      <div class="install-box" onclick="navigator.clipboard.writeText('npx cleave-sdk my_prompt.md --max-sessions 15')">
+        <span class="pr">$</span> npx cleave-sdk my_prompt.md --max-sessions 15
+        <span class="hint">click to copy</span>
+      </div>
+      <a href="https://github.com/b7069484/cleave" class="primary-btn">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+    <div class="version-tag">Shell v2.3 &middot; Plugin v3.0 &middot; SDK v4.1 &middot; MIT License &middot; github.com/b7069484/cleave</div>
+  </div>
+</section>
+
+<!-- THREE EDITIONS -->
+<section id="editions">
+  <div class="wrap">
+    <div class="slabel">Three Editions</div>
+    <div class="stitle">Same core idea. Different integration depths.</div>
+    <p class="sdesc">Every edition chains sessions with self-authored handoffs, knowledge accumulation, and loop detection. They differ in how they integrate with Claude Code.</p>
+
+    <div class="editions-grid">
+
+      <div class="edition">
+        <div class="ver">v2 &middot; Shell Script</div>
+        <h3>Cleave Classic</h3>
+        <div class="sub">~780 lines of Bash</div>
+        <p>The original. One file, zero dependencies. Pipes prompts to <code>claude -p</code> and chains sessions externally. Runs headless &mdash; output streams to your terminal but no interactive TUI.</p>
+        <ul>
+          <li class="pro">Zero dependencies &mdash; just Bash + Claude CLI</li>
+          <li class="pro">Drop anywhere, chmod +x, run</li>
+          <li class="pro">Easiest to understand and modify</li>
+          <li class="con">No TUI &mdash; headless output only</li>
+          <li class="con">No Stop hook enforcement (Claude can exit early)</li>
+        </ul>
+        <div class="install-cmd">curl -O .../cleave && chmod +x cleave</div>
+      </div>
+
+      <div class="edition">
+        <div class="ver">v3 &middot; Plugin</div>
+        <h3>Cleave Plugin</h3>
+        <div class="sub">Skills + Hooks + Slash Commands</div>
+        <p>A Claude Code plugin with a SKILL.md that teaches Claude the handoff protocol, shell-based Stop hooks that enforce handoff file writing, and <code>/handoff</code>, <code>/status</code>, <code>/resume</code> slash commands.</p>
+        <ul>
+          <li class="pro">Stop hook blocks premature exit</li>
+          <li class="pro">Slash commands for manual control</li>
+          <li class="pro">SKILL.md auto-invoked when relay detected</li>
+          <li class="con">Still headless when launched via the launcher script</li>
+          <li class="note">Plugin hooks have known bug (#10412) &mdash; workaround included</li>
+        </ul>
+        <div class="install-cmd">/plugin marketplace add github:b7069484/cleave</div>
+      </div>
+
+      <div class="edition recommended">
+        <div class="ver">v4.1 &middot; Agent SDK</div>
+        <h3>Cleave SDK</h3>
+        <div class="sub">TypeScript &middot; Full TUI &middot; Programmatic Control</div>
+        <p>The flagship edition. Spawns <code>claude</code> as a subprocess with inherited terminal, giving you the <strong>full Claude Code TUI</strong> &mdash; progress bar, tool panels, file edits &mdash; during every relay session. Hooks enforced via <code>--settings</code>. Falls back to headless <code>query()</code> mode with <code>--no-tui</code>.</p>
+        <ul>
+          <li class="pro">Full TUI visibility for every session</li>
+          <li class="pro">Programmatic loop detection, knowledge compaction</li>
+          <li class="pro">Rate limit auto-retry with countdown</li>
+          <li class="pro">Shell + programmatic hooks (dual mode)</li>
+          <li class="pro"><code>--no-tui</code> for CI/automation</li>
+          <li class="note">Requires Node.js 18+ and npm</li>
+        </ul>
+        <div class="install-cmd">git clone github.com/b7069484/cleave && cd cleave-sdk && npm i && npm run build</div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="wrap">
+    <div class="slabel">How It Works</div>
+    <div class="stitle">The agent writes its own continuation.</div>
+    <p class="sdesc">Other tools replay a generic prompt. Cleave lets each session author a bespoke briefing &mdash; lessons learned, dead ends mapped, exact resume points. Knowledge compounds. Every session is smarter than the last.</p>
+    <div class="flow-chain">
+      <div class="flow-node">
+        <div class="num">Session 1</div>
+        <h3>Processes items 1&ndash;12</h3>
+        <p>Reads your task, discovers what works and what doesn't. Operates in the 0&ndash;60% productive work zone.</p>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-file">
+        <div class="fi">&#128203;</div>
+        <div class="fn">NEXT_PROMPT.md</div>
+        <div class="fd">Written by Session 1<br>for Session 2</div>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-node active">
+        <div class="num">Session 2</div>
+        <h3>Starts from item 13</h3>
+        <p>Reads the handoff + KNOWLEDGE.md. Skips dead ends. Uses the patterns that worked.</p>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-file know">
+        <div class="fi">&#129504;</div>
+        <div class="fn">KNOWLEDGE.md</div>
+        <div class="fd">Two sections.<br>Core persists, log rolls.</div>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-node">
+        <div class="num">Session N</div>
+        <h3>Finishes the job</h3>
+        <p>N sessions of accumulated wisdom. Knows every pitfall, every shortcut. Verified complete.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <div class="slabel">Features</div>
+    <div class="stitle">Everything you need. Nothing you don't.</div>
+    <p class="sdesc">Built from the best ideas in the Claude Code ecosystem. All editions share the same core feature set.</p>
+    <div class="features-grid">
+
+      <div class="fcard">
+        <div class="ico" style="background:var(--accent-glow);color:var(--accent);">&#129504;</div>
+        <h3>Self-Authored Handoffs</h3>
+        <p>Each session writes <code>NEXT_PROMPT.md</code> &mdash; a bespoke briefing with exact resume points, tips, warnings, and setup steps. Not a template. A custom briefing that gets better every time.</p>
+      </div>
+
+      <div class="fcard">
+        <div class="ico" style="background:var(--purple-dim);color:var(--purple);">&#128218;</div>
+        <h3>Knowledge Accumulation</h3>
+        <p><code>KNOWLEDGE.md</code> has two sections: <strong>Core Knowledge</strong> (permanent) and <strong>Session Log</strong> (auto-pruned to the last 5 entries). Session 30 gets session 1's best discoveries without the noise.</p>
+      </div>
+
+      <div class="fcard">
+        <div class="ico" style="background:var(--green-dim);color:var(--green);">&#9989;</div>
+        <h3>Enforced Handoff Hooks</h3>
+        <p>Stop hooks block Claude from exiting until PROGRESS.md, KNOWLEDGE.md, and NEXT_PROMPT.md are written and fresh. Shell hooks (v3/v4) or programmatic hooks (v4 headless).</p>
+      </div>
+
+      <div class="fcard">
+        <div class="ico" style="background:var(--cyan-dim);color:var(--cyan);">&#127916;</div>
+        <h3>Full TUI Visibility</h3>
+        <p>SDK v4.1 spawns Claude with inherited terminal &mdash; you see the full Claude Code interface: progress bar, tool panels, file edits, everything. Watch your agent work in real time.</p>
+      </div>
+
+      <div class="fcard">
+        <div class="ico" style="background:var(--yellow-dim);color:var(--yellow);">&#9203;</div>
+        <h3>Rate Limit Resilience</h3>
+        <p>Detects rate limits, displays a countdown timer, waits for reset, retries the same session. No session wasted on a rate limit exit.</p>
+      </div>
+
+      <div class="fcard">
+        <div class="ico" style="background:var(--cyan-dim);color:var(--cyan);">&#127919;</div>
+        <h3>Dual Context Threshold</h3>
+        <p>Productive work stops at 60%. Handoff writing happens in the 60&ndash;70% buffer zone. 70%+ is a hard wall. ~20% more productive capacity per session than single-threshold approaches.</p>
+      </div>
+
+      <div class="fcard">
+        <div class="ico" style="background:var(--red-dim);color:var(--red);">&#128260;</div>
+        <h3>Loop Detection</h3>
+        <p>Compares consecutive handoffs. If &gt;85% identical lines, warns you. After 3 loops, stops automatically. No more burning tokens on a stuck agent.</p>
+      </div>
+
+      <div class="fcard">
+        <div class="ico" style="background:var(--green-dim);color:var(--green);">&#9989;</div>
+        <h3>Objective Verification</h3>
+        <p>With <code>--verify</code>, provide a command that objectively checks completion. Tests pass? Script exits 0? Task is done &mdash; regardless of what the agent claims.</p>
+      </div>
+
+      <div class="fcard">
+        <div class="ico" style="background:var(--blue-dim);color:var(--blue);">&#128230;</div>
+        <h3>Git Checkpoints + Audit Trail</h3>
+        <p>With <code>--git-commit</code>, auto-commits after each session. Every prompt, handoff, and knowledge snapshot archived in <code>.cleave/logs/</code>. Roll back to any point.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- COMPARISON TABLE -->
+<section id="comparison">
+  <div class="wrap">
+    <div class="slabel">Edition Comparison</div>
+    <div class="stitle">Choose the right edition for your workflow.</div>
+    <div class="ctable">
+      <table>
+        <thead><tr>
+          <th>Capability</th>
+          <th>v2 Shell</th>
+          <th>v3 Plugin</th>
+          <th class="hl">v4 SDK</th>
+        </tr></thead>
+        <tbody>
+          <tr><td>Full Claude Code TUI</td><td class="cx">&#10007;</td><td class="cx">&#10007;</td><td class="hl ck">&#10003;</td></tr>
+          <tr><td>Stop hook enforcement</td><td class="cx">&#10007;</td><td class="ck">&#10003;</td><td class="hl ck">&#10003;</td></tr>
+          <tr><td>Self-authored handoffs</td><td class="ck">&#10003;</td><td class="ck">&#10003;</td><td class="hl ck">&#10003;</td></tr>
+          <tr><td>Knowledge compounding</td><td class="ck">&#10003;</td><td class="ck">&#10003;</td><td class="hl ck">&#10003;</td></tr>
+          <tr><td>Loop detection</td><td class="ck">&#10003;</td><td class="cp">~</td><td class="hl ck">&#10003;</td></tr>
+          <tr><td>Rate limit auto-retry</td><td class="ck">&#10003;</td><td class="cp">~</td><td class="hl ck">&#10003;</td></tr>
+          <tr><td>Objective verification</td><td class="ck">&#10003;</td><td class="cx">&#10007;</td><td class="hl ck">&#10003;</td></tr>
+          <tr><td>Slash commands</td><td class="cx">&#10007;</td><td class="ck">&#10003;</td><td class="hl cx">&#10007;</td></tr>
+          <tr><td>CI/headless mode</td><td class="ck">&#10003;</td><td class="ck">&#10003;</td><td class="hl ck">&#10003; (--no-tui)</td></tr>
+          <tr><td>Dependencies</td><td>Bash only</td><td>Claude CLI</td><td class="hl">Node.js 18+</td></tr>
+          <tr><td>Language</td><td>Bash</td><td>Bash + Markdown</td><td class="hl">TypeScript</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- USE CASES -->
+<section>
+  <div class="wrap">
+    <div class="slabel">Use Cases</div>
+    <div class="stitle">Built for tasks that don't fit in one session.</div>
+    <div class="cases">
+      <div class="case"><div class="emo">&#127959;&#65039;</div><div><h4>Large Codebase Refactoring</h4><p>Convert 500 test files. Migrate frameworks. Update deprecated APIs across hundreds of files. <code>--verify "pytest"</code> confirms success.</p></div></div>
+      <div class="case"><div class="emo">&#128300;</div><div><h4>Research &amp; Data Collection</h4><p>Search archives, download files, catalog metadata across hundreds of sources. The task that inspired this tool.</p></div></div>
+      <div class="case"><div class="emo">&#128230;</div><div><h4>Batch Data Processing</h4><p>Clean, transform, validate 1,000 CSVs. Parse legacy databases. ETL pipelines that need human-level judgment.</p></div></div>
+      <div class="case"><div class="emo">&#128214;</div><div><h4>Content Generation at Scale</h4><p>46 interactive educational modules. API documentation for every endpoint. Localized app content in 20 languages.</p></div></div>
+      <div class="case"><div class="emo">&#128269;</div><div><h4>Code Review &amp; Auditing</h4><p>Security audit an entire repository. Accessibility compliance. Tech debt analysis across every file.</p></div></div>
+      <div class="case"><div class="emo">&#128260;</div><div><h4>Migration Projects</h4><p>Database schema migrations. API version upgrades. Framework transitions. Each session migrates a batch, hands off to the next.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- QUICKSTART -->
+<section id="start">
+  <div class="wrap">
+    <div class="slabel">Quickstart</div>
+    <div class="stitle">Three steps to infinite context.</div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-n">1</div>
+        <div class="step-c">
+          <h4>Write your task prompt</h4>
+          <p>Describe the task, files, tools, and what "done" looks like.</p>
+          <div class="codeblock">cat > my_task.md &lt;&lt; 'EOF'<br>Convert 500 test files from unittest to pytest.<br>Tests are in ./tests/. Start alphabetically.<br>For each file: convert, run, verify it passes.<br>EOF</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">2</div>
+        <div class="step-c">
+          <h4>Install Cleave SDK</h4>
+          <p>Clone, build, run. Or use the shell script if you prefer zero dependencies.</p>
+          <div class="codeblock">git clone https://github.com/b7069484/cleave.git<br>cd cleave/cleave-sdk<br>npm install && npm run build</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">3</div>
+        <div class="step-c">
+          <h4>Launch and watch the TUI</h4>
+          <p>Full Claude Code interface for every session. Sessions chain automatically.</p>
+          <div class="codeblock">node dist/index.js my_task.md \<br>&nbsp;&nbsp;--max-sessions 20 \<br>&nbsp;&nbsp;--verify "pytest -x" \<br>&nbsp;&nbsp;--git-commit \<br>&nbsp;&nbsp;--verbose</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- WARNINGS -->
+<section>
+  <div class="wrap">
+    <div class="slabel">Risks &amp; Mitigations</div>
+    <div class="stitle">Autonomous agents need guardrails.</div>
+    <p class="sdesc">Honest about the risks. Clear about the mitigations.</p>
+    <div class="warn-grid">
+      <div class="wcard caution">
+        <h4>&#9888;&#65039; Cost Awareness</h4>
+        <p>Each session costs API tokens. A 15-session Opus run: $75&ndash;225. Always set <code>--max-sessions</code>. Start with 3&ndash;5 to test. Check <code>status.json</code> for live progress.</p>
+      </div>
+      <div class="wcard danger">
+        <h4>&#128721; Permission Bypass</h4>
+        <p>Default runs with <code>--dangerously-skip-permissions</code>. Claude can execute any command. Use <code>--safe-mode</code> or <code>--git-commit</code> for rollback safety.</p>
+      </div>
+      <div class="wcard caution">
+        <h4>&#9888;&#65039; Handoff Quality</h4>
+        <p>The agent usually writes excellent handoffs &mdash; but sometimes vague ones. Stop hooks catch missing files. Crash recovery falls back to initial prompt + PROGRESS.md + KNOWLEDGE.md.</p>
+      </div>
+      <div class="wcard info">
+        <h4>&#8505;&#65039; Not in the Claude Marketplace (Yet)</h4>
+        <p>The Claude Code plugin marketplace is in early beta. Cleave is installable via GitHub URL but isn't in an official Anthropic directory. No certification process exists yet.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CREDITS -->
+<section>
+  <div class="wrap">
+    <div class="slabel">Standing on Shoulders</div>
+    <div class="stitle">Credit where it's due.</div>
+    <p class="sdesc">Cleave is a synthesis. These projects contributed the ideas that make it work.</p>
+    <div class="credits-grid">
+      <div class="credit">
+        <h4>Ralph Wiggum</h4>
+        <div class="what">&rarr; Verification-first philosophy</div>
+        <p>Objective verification (tests pass, build succeeds) beats agent self-assessment. "Completion promise" pattern for clean exit signals.</p>
+      </div>
+      <div class="credit">
+        <h4>GSD (Get Shit Done)</h4>
+        <div class="what">&rarr; Context rot research, subagents</div>
+        <p>Quantified context degradation: 0&ndash;30% = peak, 50%+ = declining, 70%+ = hallucinations. Dual threshold model and lean orchestrator pattern.</p>
+      </div>
+      <div class="credit">
+        <h4>claude-auto-resume</h4>
+        <div class="what">&rarr; Rate limit detection</div>
+        <p>Parsing Claude output for rate limit messages, calculating wait time, countdown display. The pattern Cleave adapted for its main loop.</p>
+      </div>
+      <div class="credit">
+        <h4>Claude Agent SDK</h4>
+        <div class="what">&rarr; Programmatic session control</div>
+        <p>Anthropic's official SDK provides query(), hooks API, and rate limit events. Cleave SDK v4 builds on this for headless mode while using subprocess spawn for TUI mode.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="fl">Cleave for Claude Code &middot; Shell v2.3 &middot; Plugin v3.0 &middot; SDK v4.1 &middot; MIT License &middot; 2026</div>
+  <div class="fr">
+    <a href="https://github.com/b7069484/cleave">GitHub</a>
+    <a href="https://github.com/b7069484/cleave/issues">Issues</a>
+    <a href="https://github.com/b7069484/cleave/discussions">Discussions</a>
+  </div>
+</footer>
+
+</body>
+</html>
