@@ -130,7 +130,8 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
     sessionCount = config.resumeFrom;
   }
 
-  let consecutiveFailures = 0;
+  let consecutiveLoops = 0;
+  let consecutiveCrashes = 0;
 
   while (sessionCount < config.maxSessions) {
     sessionCount++;
@@ -147,17 +148,17 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
     // ── Loop detection ──
     const loopResult = detectLoop(paths.logsDir, paths.nextPromptFile, sessionCount);
     if (loopResult.isLoop) {
-      consecutiveFailures++;
-      if (consecutiveFailures >= 3) {
+      consecutiveLoops++;
+      if (consecutiveLoops >= 3) {
         logger.error(`❌ 3 consecutive loops detected. Stopping to prevent waste.`);
         writeStatus(paths.statusFile, config, sessionCount, 'stuck', 'Loop detected 3 times');
         if (config.notify) sendNotification('cleave ❌', 'Stopped: agent stuck in a loop.');
         process.exit(2);
       }
       logger.warn(`🔄 LOOP DETECTED: Session ${sessionCount} handoff is ${loopResult.similarity}% identical to previous`);
-      logger.warn(`  Continuing despite loop (attempt ${consecutiveFailures} of 3)...`);
+      logger.warn(`  Continuing despite loop (attempt ${consecutiveLoops} of 3)...`);
     } else {
-      consecutiveFailures = 0;
+      consecutiveLoops = 0;
     }
 
     // ── Compact knowledge ──
@@ -183,7 +184,20 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
     touchSessionStart(paths, sessionCount);
 
     // ── Run session ──
-    const result = await runSession(prompt, config, paths, sessionCount);
+    let result;
+    try {
+      result = await runSession(prompt, config, paths, sessionCount);
+    } catch (err: any) {
+      logger.error(`Session #${sessionCount} threw an unexpected error: ${err.message}`);
+      consecutiveCrashes++;
+      if (consecutiveCrashes >= 3) {
+        logger.error(`❌ 3 consecutive session failures. Stopping.`);
+        writeStatus(paths.statusFile, config, sessionCount, 'error', `Session error: ${err.message}`);
+        if (config.notify) sendNotification('cleave ❌', 'Stopped: 3 consecutive failures.');
+        process.exit(3);
+      }
+      continue;
+    }
     logger.debug(`Session #${sessionCount} exited (code: ${result.exitCode})`);
 
     // ── Handle rate limit ──
@@ -191,7 +205,22 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
       await handleRateLimit(result.rateLimitResetAt, config);
       logger.success('Rate limit cleared. Retrying session...');
       sessionCount--; // Retry same session
+      consecutiveCrashes = 0;
       continue;
+    }
+
+    // ── Handle crashes (non-zero exit, not rate limited) ──
+    if (result.exitCode !== 0) {
+      consecutiveCrashes++;
+      if (consecutiveCrashes >= 3) {
+        logger.error(`❌ 3 consecutive session crashes (exit code ${result.exitCode}). Stopping.`);
+        writeStatus(paths.statusFile, config, sessionCount, 'error', `Crashed 3 times (exit ${result.exitCode})`);
+        if (config.notify) sendNotification('cleave ❌', 'Stopped: 3 consecutive crashes.');
+        process.exit(3);
+      }
+      logger.warn(`⚠️  Session #${sessionCount} exited with code ${result.exitCode} (crash ${consecutiveCrashes}/3)`);
+    } else {
+      consecutiveCrashes = 0;
     }
 
     // ── Run verification ──

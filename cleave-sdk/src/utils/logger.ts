@@ -4,6 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { VERSION } from '../config';
 
 const COLORS = {
   red: '\x1b[0;31m',
@@ -78,7 +79,7 @@ export class Logger {
     const C = COLORS;
     console.log('');
     console.log(`${C.bold}╔══════════════════════════════════════════════════════════╗${C.reset}`);
-    console.log(`${C.bold}║  ${C.cyan}cleave${C.reset} ${C.dim}v4.0.0 (Agent SDK edition)${C.reset}${C.bold}                   ║${C.reset}`);
+    console.log(`${C.bold}║  ${C.cyan}cleave${C.reset} ${C.dim}v${VERSION} (Agent SDK edition)${C.reset}${C.bold}                 ║${C.reset}`);
     console.log(`${C.bold}║  ${C.dim}Infinite context for Claude Code${C.reset}${C.bold}                        ║${C.reset}`);
     console.log(`${C.bold}╠══════════════════════════════════════════════════════════╣${C.reset}`);
     console.log(`${C.bold}║${C.reset}  Work dir:    ${C.blue}${path.basename(config.workDir)}${C.reset}`);

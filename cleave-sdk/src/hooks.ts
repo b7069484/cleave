@@ -48,9 +48,10 @@ export function generateSettingsFile(relayDir: string): string {
     logger.warn(`SessionStart hook script not found: ${startScript}`);
   }
 
-  // Quote paths to handle spaces in directory names (e.g., "Cleave Code")
-  const quotedStopScript = `"${stopScript}"`;
-  const quotedStartScript = `"${startScript}"`;
+  // Shell-escape paths for spaces in directory names (e.g., "Cleave Code").
+  // JSON strings are already quoted, so we must NOT add literal " chars.
+  // Instead, use bash with single-quoted path for safe shell invocation.
+  const shellEscape = (p: string) => `bash '${p.replace(/'/g, "'\\''")}'`;
 
   const settings = {
     hooks: {
@@ -59,7 +60,7 @@ export function generateSettingsFile(relayDir: string): string {
           hooks: [
             {
               type: 'command',
-              command: quotedStopScript,
+              command: shellEscape(stopScript),
               timeout: 10,
             },
           ],
@@ -70,7 +71,7 @@ export function generateSettingsFile(relayDir: string): string {
           hooks: [
             {
               type: 'command',
-              command: quotedStartScript,
+              command: shellEscape(startScript),
               timeout: 5,
             },
           ],

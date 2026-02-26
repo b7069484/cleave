@@ -3,9 +3,14 @@
   "version": "4.2.0",
   "description": "Infinite context for Claude Code — chain sessions together automatically with self-authored handoffs, knowledge accumulation, and enforced handoff hooks.",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
     "cleave": "dist/index.js"
   },
+  "files": [
+    "dist/",
+    "scripts/"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -15,16 +20,26 @@
   },
   "keywords": [
     "claude",
+    "claude-code",
     "agent",
     "relay",
     "session",
     "context",
     "handoff",
     "infinite",
-    "claude-code"
+    "anthropic",
+    "ai"
   ],
   "author": "Israel",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/b7069484/cleave.git"
+  },
+  "homepage": "https://github.com/b7069484/cleave#readme",
+  "bugs": {
+    "url": "https://github.com/b7069484/cleave/issues"
+  },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.59",
     "commander": "^12.0.0"
