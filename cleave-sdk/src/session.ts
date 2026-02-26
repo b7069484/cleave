@@ -1,10 +1,10 @@
 /**
  * Session runner — two modes:
  *
- * TUI mode (default): Spawns `claude -p` (print mode) as a child process.
- *   Claude processes the prompt, streams output to the terminal, and exits
- *   when done. This is critical for relay chaining — interactive TUI mode
- *   never auto-exits, which blocks the relay loop from starting the next session.
+ * TUI mode (default): Spawns `claude` as a child process with full TUI.
+ *   A background file poller watches for handoff completion and sends
+ *   SIGTERM to the TUI when done, so the relay loop can start the next
+ *   session. Without this, the TUI idles at `❯` forever and blocks chaining.
  *
  * Headless mode (--no-tui): Uses the Agent SDK query() function for
  *   programmatic control. No TUI — text streams to stdout.
@@ -12,7 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { CleaveConfig } from './config';
 import { RelayPaths } from './state/files';
 import { buildHooks, generateSettingsFile } from './hooks';
@@ -41,14 +41,69 @@ function writePromptFile(relayDir: string, prompt: string): string {
 }
 
 /**
- * Run a session in TUI mode — spawns `claude -p` (print mode) with
- * stdout/stderr inherited so the user sees real-time progress.
+ * Check if handoff files are complete and ready for relay.
+ * Returns true if all three files exist, are fresh (written after session start),
+ * and are non-empty. Also returns true if a completion marker is found.
+ */
+function isHandoffReady(paths: RelayPaths, completionMarker: string): boolean {
+  try {
+    const progressFile = paths.progressFile;
+    const knowledgeFile = paths.knowledgeFile;
+    const nextPromptFile = paths.nextPromptFile;
+    const sessionStart = paths.sessionStartMarker;
+
+    // Check for completion marker first
+    if (fs.existsSync(progressFile)) {
+      const content = fs.readFileSync(progressFile, 'utf8').toLowerCase();
+      const marker = completionMarker.toLowerCase();
+      if (content.includes(marker) || content.includes('task_fully_complete')) {
+        return true;
+      }
+    }
+
+    // All three files must exist
+    if (!fs.existsSync(progressFile) || !fs.existsSync(knowledgeFile) || !fs.existsSync(nextPromptFile)) {
+      return false;
+    }
+
+    // All three must be non-empty
+    if (fs.statSync(progressFile).size === 0 ||
+        fs.statSync(knowledgeFile).size === 0 ||
+        fs.statSync(nextPromptFile).size === 0) {
+      return false;
+    }
+
+    // All three must be newer than session start (if marker exists)
+    if (fs.existsSync(sessionStart)) {
+      const startTime = fs.statSync(sessionStart).mtimeMs;
+      if (fs.statSync(progressFile).mtimeMs <= startTime) return false;
+      if (fs.statSync(knowledgeFile).mtimeMs <= startTime) return false;
+      if (fs.statSync(nextPromptFile).mtimeMs <= startTime) return false;
+    }
+
+    // Check for RELAY_HANDOFF_COMPLETE in progress file
+    const progressContent = fs.readFileSync(progressFile, 'utf8');
+    if (progressContent.includes('RELAY_HANDOFF_COMPLETE') ||
+        progressContent.includes('HANDOFF_COMPLETE') ||
+        progressContent.includes('STATUS: IN_PROGRESS')) {
+      return true;
+    }
+
+    // All files present, fresh, and non-empty — good enough
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run a session in TUI mode — spawns `claude` with full interactive TUI.
  *
- * CRITICAL: We use `-p` (print mode) instead of interactive TUI because
- * interactive TUI never auto-exits after processing — it returns to the
- * `❯` idle prompt and waits for more input. This blocks the relay loop
- * from ever starting the next session. With `-p`, Claude processes the
- * prompt, streams output, and exits when done.
+ * CRITICAL: Claude Code's TUI never auto-exits after processing a prompt.
+ * It returns to the idle `❯` prompt and waits for more input. To make the
+ * relay chain work, we poll the filesystem every 5 seconds for handoff
+ * completion. Once all handoff files are written, we SIGTERM the TUI
+ * process so the relay loop can start the next session.
  */
 async function runTuiSession(
   taskPrompt: string,
@@ -68,8 +123,6 @@ async function runTuiSession(
   const handoffInstructions = buildHandoffInstructions(config);
 
   const args: string[] = [
-    '-p',  // Print mode: process prompt and EXIT (critical for relay chaining)
-    '--verbose',  // Show tool calls and intermediate steps
     `You are session #${sessionNum} of an automated Cleave relay. ` +
     `Read the file "${promptFilePath}" for your full task instructions. ` +
     `Execute those instructions immediately. Do NOT ask for confirmation.`,
@@ -81,12 +134,16 @@ async function runTuiSession(
     args.push('--dangerously-skip-permissions');
   }
 
-  logger.debug(`Launching session #${sessionNum} (print mode)`);
+  logger.debug(`Launching TUI session #${sessionNum}`);
   logger.debug(`  Prompt file: ${promptFilePath}`);
+
+  // Track whether we intentionally killed the TUI
+  let killedByRelay = false;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   try {
     const child = spawn('claude', args, {
-      stdio: ['ignore', 'inherit', 'inherit'],  // No stdin needed in print mode
+      stdio: 'inherit',
       cwd: config.workDir,
       env: {
         ...process.env,
@@ -95,20 +152,57 @@ async function runTuiSession(
       },
     });
 
+    // ── Handoff file poller ──
+    // Wait 30 seconds before starting to poll (give Claude time to begin work).
+    // Then check every 5 seconds if handoff files are complete.
+    // When they are, SIGTERM the TUI so the relay loop can continue.
+    const POLL_DELAY_MS = 30_000;    // Wait 30s before first check
+    const POLL_INTERVAL_MS = 5_000;  // Then check every 5s
+
+    const startPolling = () => {
+      pollTimer = setInterval(() => {
+        if (isHandoffReady(paths, config.completionMarker)) {
+          logger.debug(`Handoff files detected — terminating TUI session #${sessionNum}`);
+          killedByRelay = true;
+          if (pollTimer) clearInterval(pollTimer);
+          pollTimer = null;
+
+          // Give Claude a moment to finish writing, then kill
+          setTimeout(() => {
+            try {
+              child.kill('SIGTERM');
+            } catch { /* process may have already exited */ }
+          }, 2_000);
+        }
+      }, POLL_INTERVAL_MS);
+    };
+
+    // Delay the start of polling
+    const delayTimer = setTimeout(startPolling, POLL_DELAY_MS);
+
     result.exitCode = await new Promise<number>((resolve, reject) => {
-      child.on('exit', (code) => resolve(code ?? 1));
+      child.on('exit', (code) => {
+        clearTimeout(delayTimer);
+        if (pollTimer) clearInterval(pollTimer);
+        // If we killed it intentionally, treat as success (exit 0)
+        resolve(killedByRelay ? 0 : (code ?? 1));
+      });
       child.on('error', (err) => {
+        clearTimeout(delayTimer);
+        if (pollTimer) clearInterval(pollTimer);
         logger.error(`Failed to spawn claude: ${err.message}`);
         reject(err);
       });
     });
   } catch (err: any) {
     result.exitCode = 1;
-    logger.error(`Session error: ${err.message}`);
+    logger.error(`TUI session error: ${err.message}`);
+  } finally {
+    if (pollTimer) clearInterval(pollTimer);
   }
 
   // Detect rate limiting from exit patterns
-  if (result.exitCode !== 0) {
+  if (result.exitCode !== 0 && !killedByRelay) {
     const progressFresh = fs.existsSync(paths.progressFile) &&
       fs.existsSync(paths.sessionStartMarker) &&
       fs.statSync(paths.progressFile).mtimeMs > fs.statSync(paths.sessionStartMarker).mtimeMs;
