@@ -1,0 +1,25 @@
+{
+  "name": "cleave",
+  "version": "4.2.0",
+  "description": "Infinite context for Claude Code — automatic session relay with TUI mode, continue command, knowledge compaction, crash recovery, and SDK integration.",
+  "author": {
+    "name": "Israel",
+    "url": "https://github.com/cleave-plugin"
+  },
+  "license": "MIT",
+  "keywords": [
+    "relay",
+    "session",
+    "context",
+    "handoff",
+    "infinite",
+    "continuation",
+    "long-running",
+    "tui",
+    "sdk",
+    "orchestration",
+    "knowledge",
+    "compaction"
+  ],
+  "hooks": "./hooks/hooks.json"
+}

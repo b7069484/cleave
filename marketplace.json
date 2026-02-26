@@ -5,10 +5,10 @@
   "plugins": [
     {
       "name": "cleave",
-      "description": "Chain Claude Code sessions together automatically — self-authored handoffs, knowledge accumulation, enforced handoff hooks",
-      "version": "3.0.0",
-      "path": "cleave-plugin",
-      "keywords": ["relay", "session", "context", "handoff", "infinite"],
+      "description": "Infinite context for Claude Code — automatic session relay with TUI mode, continue command, knowledge compaction, crash recovery, and SDK integration",
+      "version": "4.2.0",
+      "path": "cleave-plugin-v4",
+      "keywords": ["relay", "session", "context", "handoff", "infinite", "tui", "sdk", "orchestration", "knowledge", "compaction"],
       "author": "Israel"
     }
   ]

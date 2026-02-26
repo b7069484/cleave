@@ -1,0 +1,28 @@
+{
+  "description": "Cleave session relay hooks — enforces handoff file writing before session exit",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/stop-check.sh",
+            "timeout": 10,
+            "statusMessage": "Checking cleave handoff files..."
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
