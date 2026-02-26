@@ -1,28 +1,29 @@
 /**
  * CLI argument parsing and validation.
- * Supports two subcommands: run (default) and continue.
+ * Supports three subcommands: run (default), continue, and pipeline.
  */
 
 import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CleaveConfig, DEFAULT_CONFIG, VERSION } from './config';
+import { CleaveConfig, DEFAULT_CONFIG, VERSION, validateConfig } from './config';
+import { loadPipelineConfig } from './pipeline-config';
 
 /**
- * Add shared options to a command (used by both run and continue).
+ * Add shared options to a command (used by run, continue, and pipeline).
  */
 function addSharedOptions(cmd: Command): Command {
   return cmd
-    .option('-m, --max-sessions <n>', 'Maximum sessions (1-1000)', String(DEFAULT_CONFIG.maxSessions))
+    .option('-m, --max-sessions <n>', 'Maximum sessions (1-10000)', String(DEFAULT_CONFIG.maxSessions))
     .option('-d, --work-dir <dir>', 'Working directory', DEFAULT_CONFIG.workDir)
     .option('-p, --pause <seconds>', 'Seconds between sessions', String(DEFAULT_CONFIG.pauseSeconds))
     .option('-c, --completion-marker <string>', 'Completion signal string', DEFAULT_CONFIG.completionMarker)
     .option('-g, --git-commit', 'Auto-commit after each session', DEFAULT_CONFIG.gitCommit)
     .option('--no-notify', 'Disable desktop notifications')
     .option('--verify <command>', 'Verification command (exit 0 = done)')
+    .option('--verify-timeout <seconds>', 'Timeout for verification command', String(DEFAULT_CONFIG.verifyTimeout))
     .option('--safe-mode', 'Require permission prompts', DEFAULT_CONFIG.safeMode)
     .option('-v, --verbose', 'Detailed logging', DEFAULT_CONFIG.verbose)
-    .option('--subagents', 'Hint Claude to spawn subagents', DEFAULT_CONFIG.enableSubagents)
     .option('--no-tui', 'Headless mode — use Agent SDK query() instead of TUI');
 }
 
@@ -31,13 +32,18 @@ function addSharedOptions(cmd: Command): Command {
  */
 function validateAndBuildConfig(opts: any, program: Command): Partial<CleaveConfig> {
   const maxSessions = parseInt(opts.maxSessions, 10);
-  if (isNaN(maxSessions) || maxSessions < 1 || maxSessions > 1000) {
-    program.error('Error: --max-sessions must be between 1 and 1000');
+  if (isNaN(maxSessions) || maxSessions < 1 || maxSessions > 10000) {
+    program.error('Error: --max-sessions must be between 1 and 10,000');
   }
 
   const pauseSeconds = parseInt(opts.pause, 10);
   if (isNaN(pauseSeconds) || pauseSeconds < 0) {
     program.error('Error: --pause must be a non-negative integer');
+  }
+
+  const verifyTimeout = parseInt(opts.verifyTimeout || String(DEFAULT_CONFIG.verifyTimeout), 10);
+  if (isNaN(verifyTimeout) || verifyTimeout < 1 || verifyTimeout > 600) {
+    program.error('Error: --verify-timeout must be between 1 and 600');
   }
 
   const workDir = path.resolve(opts.workDir);
@@ -53,9 +59,9 @@ function validateAndBuildConfig(opts: any, program: Command): Partial<CleaveConf
     gitCommit: opts.gitCommit ?? DEFAULT_CONFIG.gitCommit,
     notify: opts.notify ?? DEFAULT_CONFIG.notify,
     verifyCommand: opts.verify || null,
+    verifyTimeout,
     safeMode: opts.safeMode ?? DEFAULT_CONFIG.safeMode,
     verbose: opts.verbose ?? DEFAULT_CONFIG.verbose,
-    enableSubagents: opts.subagents ?? DEFAULT_CONFIG.enableSubagents,
     handoffThreshold: DEFAULT_CONFIG.handoffThreshold,
     handoffDeadline: DEFAULT_CONFIG.handoffDeadline,
     knowledgeKeepSessions: DEFAULT_CONFIG.knowledgeKeepSessions,
@@ -88,17 +94,27 @@ export function parseArgs(argv: string[]): CleaveConfig {
   addSharedOptions(continueCmd)
     .option('-f, --file <path>', 'Read continuation prompt from a file instead of inline');
 
+  // ── "pipeline" subcommand ──
+  const pipelineCmd = program
+    .command('pipeline <config-yaml>')
+    .description('Run a multi-stage pipeline from a YAML config');
+
+  addSharedOptions(pipelineCmd)
+    .option('--resume-stage <name>', 'Resume pipeline from a specific stage')
+    .option('--skip-stage <name>', 'Skip a specific stage in the pipeline');
+
   // Parse
   program.parse(argv);
 
   // Determine which subcommand was invoked
-  const invoked = program.args[0];
-  const subcommand = program.commands.find(c => c.name() === (program as any)._activeCommand?.name());
-
-  // Check if "continue" was invoked
   const activeCmd = (program as any)._activeCommand;
+
   if (activeCmd && activeCmd.name() === 'continue') {
     return parseContinueCommand(activeCmd, program);
+  }
+
+  if (activeCmd && activeCmd.name() === 'pipeline') {
+    return parsePipelineCommand(activeCmd, program);
   }
 
   // Default: "run" command
@@ -125,14 +141,21 @@ function parseRunCommand(cmd: Command, program: Command): CleaveConfig {
 
   const base = validateAndBuildConfig(opts, program);
 
-  return {
+  const config = {
     ...DEFAULT_CONFIG,
     ...base,
     initialPromptFile: resolvedPromptFile,
     resumeFrom,
     isContinuation: false,
     continuePrompt: null,
+    isPipeline: false,
+    pipelineConfig: null,
+    resumeStage: null,
+    skipStage: null,
   } as CleaveConfig;
+
+  validateConfig(config);
+  return config;
 }
 
 function parseContinueCommand(cmd: Command, program: Command): CleaveConfig {
@@ -169,16 +192,63 @@ function parseContinueCommand(cmd: Command, program: Command): CleaveConfig {
   }
 
   // Use a dummy initial prompt file (continuation reads from NEXT_PROMPT.md)
-  // We need a valid path — create a temp one in .cleave/
   const tempPromptFile = path.join(relayDir, '.continuation_prompt.md');
   fs.writeFileSync(tempPromptFile, continuePrompt);
 
-  return {
+  const config = {
     ...DEFAULT_CONFIG,
     ...base,
     initialPromptFile: tempPromptFile,
     resumeFrom: 0,
     isContinuation: true,
     continuePrompt,
+    isPipeline: false,
+    pipelineConfig: null,
+    resumeStage: null,
+    skipStage: null,
   } as CleaveConfig;
+
+  validateConfig(config);
+  return config;
+}
+
+function parsePipelineCommand(cmd: Command, program: Command): CleaveConfig {
+  const opts = cmd.opts();
+  const configYaml = cmd.args[0];
+
+  if (!configYaml) {
+    program.error('Error: no pipeline config YAML file specified.');
+  }
+
+  const resolvedYaml = path.resolve(configYaml);
+  if (!fs.existsSync(resolvedYaml)) {
+    program.error(`Error: pipeline config not found: ${resolvedYaml}`);
+  }
+
+  const base = validateAndBuildConfig(opts, program);
+
+  // Load and validate pipeline config
+  let pipelineConfig;
+  try {
+    pipelineConfig = loadPipelineConfig(resolvedYaml, base.workDir);
+  } catch (err: any) {
+    program.error(`Pipeline config error: ${err.message}`);
+  }
+
+  const config = {
+    ...DEFAULT_CONFIG,
+    ...base,
+    initialPromptFile: resolvedYaml,
+    resumeFrom: 0,
+    isContinuation: false,
+    continuePrompt: null,
+    isPipeline: true,
+    pipelineConfig,
+    resumeStage: opts.resumeStage || null,
+    skipStage: opts.skipStage || null,
+  } as CleaveConfig;
+
+  // Don't validate resumeFrom < maxSessions for pipeline mode
+  // (pipeline manages its own max sessions per stage)
+  return config;
 }

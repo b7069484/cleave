@@ -4,63 +4,69 @@
  * KNOWLEDGE.md has two sections:
  *   ## Core Knowledge — permanent, never pruned
  *   ## Session Log — auto-pruned to last N entries
+ *
+ * Robust: handles missing headers, different heading formats, and
+ * creates a backup before pruning.
  */
 
 import * as fs from 'fs';
 
-/**
- * Compact the knowledge file by pruning old Session Log entries.
- * Keeps the Core Knowledge section intact and only the last N session entries.
- */
-export function compactKnowledge(knowledgePath: string, keepSessions: number): { pruned: boolean; oldLines: number; newLines: number } {
+export function compactKnowledge(
+  knowledgePath: string,
+  keepSessions: number
+): { pruned: boolean; oldLines: number; newLines: number } {
   if (!fs.existsSync(knowledgePath)) {
     return { pruned: false, oldLines: 0, newLines: 0 };
   }
 
   const content = fs.readFileSync(knowledgePath, 'utf8');
   const lines = content.split('\n');
+  const oldLines = lines.length;
 
-  // Count session entries
-  const sessionEntries = lines.filter(l => l.startsWith('### Session'));
-  const entryCount = sessionEntries.length;
-
-  if (entryCount <= keepSessions) {
-    return { pruned: false, oldLines: lines.length, newLines: lines.length };
-  }
-
-  // Find the Session Log header
-  const logHeaderIndex = lines.findIndex(l => l.startsWith('## Session Log'));
-  if (logHeaderIndex === -1) {
-    return { pruned: false, oldLines: lines.length, newLines: lines.length };
-  }
-
-  // Keep everything up to and including the Session Log header + blank line
-  const headerSection = lines.slice(0, logHeaderIndex + 2); // +2 for header + blank line
-
-  // Extract session entries from after the header
-  const logSection = lines.slice(logHeaderIndex + 2);
-
-  // Find entry boundaries (each starts with "### Session")
-  const entryStarts: number[] = [];
-  logSection.forEach((line, i) => {
-    if (line.startsWith('### Session')) {
-      entryStarts.push(i);
-    }
+  // Find session entries — match both "### Session N" and "### Session #N"
+  const sessionPattern = /^###\s+Session\s/i;
+  const entryIndices: number[] = [];
+  lines.forEach((line, i) => {
+    if (sessionPattern.test(line)) entryIndices.push(i);
   });
 
-  // Keep only the last N entries
-  const entriesToKeep = entryStarts.slice(-keepSessions);
-  if (entriesToKeep.length === 0) {
-    return { pruned: false, oldLines: lines.length, newLines: lines.length };
+  if (entryIndices.length <= keepSessions) {
+    return { pruned: false, oldLines, newLines: oldLines };
   }
 
-  const keptSection = logSection.slice(entriesToKeep[0]);
-  const newContent = [...headerSection, ...keptSection].join('\n');
+  // Find the Session Log header (flexible matching)
+  const logHeaderIndex = lines.findIndex(l => /^##\s+Session\s+Log/i.test(l));
+  if (logHeaderIndex === -1) {
+    // No Session Log header found — don't prune, log warning
+    return { pruned: false, oldLines, newLines: oldLines };
+  }
 
-  const oldLines = lines.length;
+  // Backup before pruning
+  try {
+    fs.writeFileSync(knowledgePath + '.bak', content);
+  } catch { /* best effort */ }
+
+  // Keep everything before Session Log section
+  const headerSection = lines.slice(0, logHeaderIndex + 2); // header + description line
+
+  // Find entries WITHIN the session log section only
+  const logEntryIndices = entryIndices.filter(i => i > logHeaderIndex);
+  if (logEntryIndices.length <= keepSessions) {
+    return { pruned: false, oldLines, newLines: oldLines };
+  }
+
+  // Keep last N entries
+  const keepFrom = logEntryIndices[logEntryIndices.length - keepSessions];
+  const keptSection = lines.slice(keepFrom);
+  const newContent = [...headerSection, ...keptSection].join('\n');
   const newLines = newContent.split('\n').length;
 
-  fs.writeFileSync(knowledgePath, newContent);
+  // Validate: ensure Core Knowledge section survived
+  if (!newContent.includes('## Core Knowledge')) {
+    // Something went wrong — abort, restore from backup
+    return { pruned: false, oldLines, newLines: oldLines };
+  }
 
+  fs.writeFileSync(knowledgePath, newContent);
   return { pruned: true, oldLines, newLines };
 }

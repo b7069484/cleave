@@ -2,8 +2,7 @@
  * Session runner — two modes:
  *
  * TUI mode (default): Spawns `claude` as a child process with stdio inherited,
- *   so the user sees the full Claude Code TUI. Hooks are enforced via a
- *   generated settings JSON file passed to `--settings`.
+ *   so the user sees the full Claude Code TUI.
  *
  * Headless mode (--no-tui): Uses the Agent SDK query() function for
  *   programmatic control. No TUI — text streams to stdout.
@@ -19,32 +18,28 @@ import { buildHandoffInstructions } from './utils/prompt-builder';
 import { logger } from './utils/logger';
 
 export interface SessionResult {
-  /** Process exit code (TUI mode) or synthetic code (headless) */
   exitCode: number;
-
-  /** Whether a rate limit was hit during this session */
   rateLimited: boolean;
-
-  /** Rate limit reset time (ms since epoch), if detected */
   rateLimitResetAt: number | null;
-
-  /** Full text output from Claude (headless mode only, empty in TUI mode) */
   resultText: string;
 }
 
+/** Rate limit detection patterns — comprehensive list. */
+const RATE_LIMIT_PATTERNS = /rate.?limit|too many requests|usage.?limit|quota.?exceeded|limit.?reached|429|capacity|throttl/i;
+
 /**
- * Write the prompt to a file and return a short instruction to read it.
- * This avoids command-line arg length limits for long prompts.
+ * Write the prompt to a file and return the path.
+ * Avoids command-line arg length limits for long prompts.
  */
 function writePromptFile(relayDir: string, prompt: string): string {
   const promptPath = path.join(relayDir, '.session_prompt.md');
+  fs.mkdirSync(path.dirname(promptPath), { recursive: true });
   fs.writeFileSync(promptPath, prompt, 'utf8');
   return promptPath;
 }
 
 /**
  * Run a session in TUI mode — spawns `claude` with inherited stdio.
- * The user sees the full Claude Code interactive interface.
  */
 async function runTuiSession(
   taskPrompt: string,
@@ -59,39 +54,24 @@ async function runTuiSession(
     resultText: '',
   };
 
-  // Generate the settings file with Stop + SessionStart hooks
   const settingsPath = generateSettingsFile(paths.relayDir);
-
-  // Write the task prompt to a file (avoids arg length issues)
   const promptFilePath = writePromptFile(paths.relayDir, taskPrompt);
-
-  // Build the handoff instructions for --append-system-prompt
   const handoffInstructions = buildHandoffInstructions(config);
 
-  // Build claude CLI arguments
-  const args: string[] = [];
-
-  // The task prompt: tell Claude to read the prompt file
-  args.push(
+  const args: string[] = [
     `You are session #${sessionNum} of an automated Cleave relay. ` +
     `Read the file "${promptFilePath}" for your full task instructions. ` +
-    `Execute those instructions immediately. Do NOT ask for confirmation.`
-  );
+    `Execute those instructions immediately. Do NOT ask for confirmation.`,
+    '--append-system-prompt', handoffInstructions,
+    '--settings', settingsPath,
+  ];
 
-  // Inject handoff instructions as system prompt
-  args.push('--append-system-prompt', handoffInstructions);
-
-  // Load hooks via settings
-  args.push('--settings', settingsPath);
-
-  // Permission mode
   if (!config.safeMode) {
     args.push('--dangerously-skip-permissions');
   }
 
   logger.debug(`Launching TUI session #${sessionNum}`);
   logger.debug(`  Prompt file: ${promptFilePath}`);
-  logger.debug(`  Settings: ${settingsPath}`);
 
   try {
     const child = spawn('claude', args, {
@@ -117,19 +97,16 @@ async function runTuiSession(
   }
 
   // Detect rate limiting from exit patterns
-  // If Claude exited abnormally and handoff files weren't written, it might be rate limited
   if (result.exitCode !== 0) {
     const progressFresh = fs.existsSync(paths.progressFile) &&
       fs.existsSync(paths.sessionStartMarker) &&
       fs.statSync(paths.progressFile).mtimeMs > fs.statSync(paths.sessionStartMarker).mtimeMs;
 
     if (!progressFresh) {
-      // Session ended without writing handoff — could be rate limit or crash
-      // Check if the completion marker is set (task done)
+      // Check progress file content for rate limit signals
       const progressContent = fs.existsSync(paths.progressFile)
-        ? fs.readFileSync(paths.progressFile, 'utf8')
-        : '';
-      if (/rate.?limit|usage.?limit|too many/i.test(progressContent)) {
+        ? fs.readFileSync(paths.progressFile, 'utf8') : '';
+      if (RATE_LIMIT_PATTERNS.test(progressContent)) {
         result.rateLimited = true;
         result.rateLimitResetAt = Date.now() + 300_000;
         logger.warn('Rate limit detected from session output');
@@ -142,7 +119,6 @@ async function runTuiSession(
 
 /**
  * Run a session in headless mode — uses Agent SDK query().
- * No TUI — text streams to stdout in verbose mode.
  */
 async function runHeadlessSession(
   prompt: string,
@@ -150,15 +126,14 @@ async function runHeadlessSession(
   paths: RelayPaths,
   sessionNum: number
 ): Promise<SessionResult> {
-  // Dynamic import — the SDK may not be installed at lint time
   let query: any;
   try {
     const sdk = await import('@anthropic-ai/claude-agent-sdk');
     query = sdk.query;
-  } catch (err) {
-    logger.error('Failed to import @anthropic-ai/claude-agent-sdk');
+  } catch (err: any) {
+    logger.error(`Failed to import @anthropic-ai/claude-agent-sdk: ${err.message}`);
     logger.error('Install it with: npm install @anthropic-ai/claude-agent-sdk');
-    throw new Error('Agent SDK not available');
+    throw new Error(`Agent SDK not available: ${err.message}`);
   }
 
   const result: SessionResult = {
@@ -193,9 +168,7 @@ async function runHeadlessSession(
         for (const block of (message.message?.content || [])) {
           if (block.type === 'text') {
             result.resultText += block.text;
-            if (config.verbose) {
-              process.stdout.write(block.text);
-            }
+            if (config.verbose) process.stdout.write(block.text);
           }
         }
       } else if (message.type === 'result') {
@@ -211,10 +184,10 @@ async function runHeadlessSession(
     }
   } catch (err: any) {
     const errMsg = String(err.message || err);
-    if (/rate.?limit|too many requests|usage.?limit/i.test(errMsg)) {
+    if (RATE_LIMIT_PATTERNS.test(errMsg)) {
       result.rateLimited = true;
       result.rateLimitResetAt = Date.now() + 300_000;
-      logger.warn(`Rate limit detected in error: ${errMsg}`);
+      logger.warn(`Rate limit detected: ${errMsg.slice(0, 100)}`);
     } else {
       result.exitCode = 1;
       logger.error(`Session error: ${errMsg}`);
@@ -233,9 +206,7 @@ export async function runSession(
   paths: RelayPaths,
   sessionNum: number
 ): Promise<SessionResult> {
-  if (config.tui) {
-    return runTuiSession(prompt, config, paths, sessionNum);
-  } else {
-    return runHeadlessSession(prompt, config, paths, sessionNum);
-  }
+  return config.tui
+    ? runTuiSession(prompt, config, paths, sessionNum)
+    : runHeadlessSession(prompt, config, paths, sessionNum);
 }

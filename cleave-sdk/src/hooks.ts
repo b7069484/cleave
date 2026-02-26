@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { RelayPaths, checkHandoffFiles } from './state/files';
-import { isComplete } from './detection/completion';
+import { isComplete } from './detection';
 import { logger } from './utils/logger';
 
 /**

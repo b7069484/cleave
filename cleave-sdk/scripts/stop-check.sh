@@ -1,32 +1,26 @@
 #!/usr/bin/env bash
 # Cleave SDK — Stop hook enforcement (shell version for TUI mode)
 #
-# This script runs as a Claude Code Stop hook via --settings.
-# It prevents Claude from exiting until handoff files are written.
-#
+# Prevents Claude from exiting until handoff files are written.
 # Input:  JSON on stdin with session/tool info
 # Output: JSON on stdout if blocking
 # Exit:   0 = allow exit, 2 = block exit
+#
+# v5: Pure bash JSON parsing — no Python dependency.
 
 INPUT=$(cat 2>/dev/null || true)
 
-# Try to extract cwd from JSON input
+# Parse CWD from JSON using pure bash (extract "cwd" or "workingDir" value)
 CWD=""
 if [ -n "$INPUT" ]; then
-  CWD=$(echo "$INPUT" | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    if isinstance(data, dict):
-        print(data.get('cwd', data.get('workingDir', '')))
-    else:
-        print('')
-except:
-    print('')
-" 2>/dev/null || true)
+  # Match "cwd":"<value>" or "cwd": "<value>" — handles JSON with/without spaces
+  CWD=$(echo "$INPUT" | grep -oE '"cwd"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"cwd"\s*:\s*"//;s/"$//')
+  if [ -z "$CWD" ]; then
+    CWD=$(echo "$INPUT" | grep -oE '"workingDir"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"workingDir"\s*:\s*"//;s/"$//')
+  fi
 fi
 
-# Fallback: try env vars
+# Fallback: env vars
 if [ -z "$CWD" ]; then
   CWD="${CLEAVE_WORK_DIR:-${PWD:-}}"
 fi

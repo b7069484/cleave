@@ -1,5 +1,6 @@
 /**
- * Builds session prompts with handoff instructions appended.
+ * Builds session prompts with handoff instructions.
+ * Deduplicated: buildBasePrompt() handles common logic for both TUI and headless modes.
  */
 
 import * as fs from 'fs';
@@ -11,15 +12,6 @@ import { CleaveConfig } from '../config';
  * Exported so TUI mode can pass it via --append-system-prompt separately.
  */
 export function buildHandoffInstructions(config: CleaveConfig): string {
-  const subagentBlock = config.enableSubagents ? `
-**SUBAGENT STRATEGY (recommended for heavy tasks):**
-For tasks that involve processing many files or doing repetitive work, consider
-spawning subagents to keep your main context lean:
-  \`claude -p "Process files X-Y according to these rules: ..." --dangerously-skip-permissions\`
-This gives each subtask a fresh 200K context window while your orchestrator
-session stays at ~15-30% context. Only do this for clearly independent subtasks.
-` : '';
-
   return `
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -38,7 +30,7 @@ predictably: 0-30% = peak quality, 50%+ = declining, 70%+ = errors/hallucination
 
 When you estimate you've used ~${config.handoffThreshold}% of your context window, STOP working
 and execute the handoff procedure immediately.
-${subagentBlock}
+
 **STEP 1 — Update \`.cleave/PROGRESS.md\`:**
 - STATUS: either \`IN_PROGRESS\` or \`${config.completionMarker}\`
 - What you accomplished (specific counts, files, items)
@@ -77,10 +69,11 @@ and print \`TASK_FULLY_COMPLETE\` instead.
 }
 
 /**
- * Build just the task prompt (without handoff instructions).
- * Used in TUI mode where handoff instructions go via --append-system-prompt.
+ * Build the base task prompt for a session (common logic for TUI + headless).
+ * Reads NEXT_PROMPT.md for session 2+, or initial prompt for session 1.
+ * Appends progress and knowledge references.
  */
-export function buildTaskPrompt(config: CleaveConfig, sessionNum: number): string {
+function buildBasePrompt(config: CleaveConfig, sessionNum: number): string {
   const relayDir = path.join(config.workDir, '.cleave');
   const progressFile = path.join(relayDir, 'PROGRESS.md');
   const nextPromptFile = path.join(relayDir, 'NEXT_PROMPT.md');
@@ -92,17 +85,25 @@ export function buildTaskPrompt(config: CleaveConfig, sessionNum: number): strin
     prompt = fs.readFileSync(nextPromptFile, 'utf8');
   } else {
     prompt = fs.readFileSync(config.initialPromptFile, 'utf8');
-
     if (fs.existsSync(progressFile)) {
-      const progress = fs.readFileSync(progressFile, 'utf8');
-      prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${progress}`;
+      prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${fs.readFileSync(progressFile, 'utf8')}`;
     }
   }
 
+  // Knowledge reference
   if (fs.existsSync(knowledgeFile)) {
-    const knowledgeLines = fs.readFileSync(knowledgeFile, 'utf8').split('\n').length;
-    if (knowledgeLines > 10) {
+    const kLines = fs.readFileSync(knowledgeFile, 'utf8').split('\n').length;
+    if (kLines > 10) {
       prompt += '\n\n--- ACCUMULATED KNOWLEDGE ---\nRead `.cleave/KNOWLEDGE.md` for tips and patterns from prior sessions.';
+    }
+  }
+
+  // Shared pipeline knowledge reference
+  const sharedKnowledge = path.join(config.workDir, '.cleave', 'shared', 'KNOWLEDGE.md');
+  if (fs.existsSync(sharedKnowledge)) {
+    const sharedLines = fs.readFileSync(sharedKnowledge, 'utf8').split('\n').length;
+    if (sharedLines > 5) {
+      prompt += '\n\n--- SHARED PIPELINE KNOWLEDGE ---\nRead `.cleave/shared/KNOWLEDGE.md` for cross-stage insights from earlier pipeline stages.';
     }
   }
 
@@ -110,41 +111,49 @@ export function buildTaskPrompt(config: CleaveConfig, sessionNum: number): strin
 }
 
 /**
+ * Build just the task prompt (without handoff instructions).
+ * Used in TUI mode where handoff instructions go via --append-system-prompt.
+ */
+export function buildTaskPrompt(config: CleaveConfig, sessionNum: number): string {
+  return buildBasePrompt(config, sessionNum);
+}
+
+/**
  * Build the complete prompt for a given session (task + handoff instructions).
  * Used in headless/query() mode.
  */
 export function buildSessionPrompt(config: CleaveConfig, sessionNum: number): string {
-  const relayDir = path.join(config.workDir, '.cleave');
-  const progressFile = path.join(relayDir, 'PROGRESS.md');
-  const nextPromptFile = path.join(relayDir, 'NEXT_PROMPT.md');
-  const knowledgeFile = path.join(relayDir, 'KNOWLEDGE.md');
+  return buildBasePrompt(config, sessionNum) + buildHandoffInstructions(config);
+}
 
-  let prompt: string;
+/**
+ * Build stage-aware handoff instructions for pipeline mode.
+ */
+export function buildStageHandoffInstructions(
+  config: CleaveConfig,
+  stageName: string,
+  stageNum: number,
+  totalStages: number,
+  stageCompletion: string
+): string {
+  return `
 
-  if (sessionNum > 1 && fs.existsSync(nextPromptFile)) {
-    // Use Claude's own handoff prompt
-    prompt = fs.readFileSync(nextPromptFile, 'utf8');
-  } else {
-    // First session or no handoff: use initial prompt
-    prompt = fs.readFileSync(config.initialPromptFile, 'utf8');
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PIPELINE STAGE ${stageNum}/${totalStages}: "${stageName}" — RELAY INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // Append progress if exists
-    if (fs.existsSync(progressFile)) {
-      const progress = fs.readFileSync(progressFile, 'utf8');
-      prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${progress}`;
-    }
-  }
+You are stage "${stageName}" (${stageNum} of ${totalStages}) in a Cleave pipeline.
 
-  // Append knowledge reference
-  if (fs.existsSync(knowledgeFile)) {
-    const knowledgeLines = fs.readFileSync(knowledgeFile, 'utf8').split('\n').length;
-    if (knowledgeLines > 10) {
-      prompt += '\n\n--- ACCUMULATED KNOWLEDGE ---\nRead `.cleave/KNOWLEDGE.md` for tips and patterns from prior sessions.';
-    }
-  }
+**YOUR COMPLETION MARKER:** \`${stageCompletion}\`
+When your stage's work is FULLY done, set \`STATUS: ${stageCompletion}\` in
+\`.cleave/stages/${stageName}/PROGRESS.md\` and print \`TASK_FULLY_COMPLETE\`.
 
-  // Always append handoff instructions
-  prompt += buildHandoffInstructions(config);
+**STATE FILES:** Your state files are in \`.cleave/stages/${stageName}/\`:
+- PROGRESS.md, KNOWLEDGE.md, NEXT_PROMPT.md (same handoff rules as standard relay)
 
-  return prompt;
+**SHARED KNOWLEDGE:** If you discover insights useful for later stages,
+add them to your Core Knowledge section — they'll be promoted to shared knowledge.
+
+**CONTEXT BUDGET:** Same rules — stop at ~${config.handoffThreshold}% and do the handoff.
+`;
 }

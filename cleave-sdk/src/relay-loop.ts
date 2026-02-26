@@ -1,17 +1,6 @@
 /**
  * Main session relay loop — orchestrates the entire cleave lifecycle.
- *
- * For each session:
- *   1. Check completion
- *   2. Detect loops
- *   3. Compact knowledge
- *   4. Build prompt
- *   5. Run session (with Stop hook enforcement)
- *   6. Handle rate limits
- *   7. Run verification
- *   8. Archive state
- *   9. Git commit
- *   10. Pause
+ * Extracted: runRelayCore() is reusable by pipeline-loop for per-stage relays.
  */
 
 import * as fs from 'fs';
@@ -26,10 +15,8 @@ import {
   readSessionCount,
 } from './state/files';
 import { compactKnowledge } from './state/knowledge';
-import { writeStatus, SessionStatus } from './state/status';
-import { isComplete } from './detection/completion';
-import { detectLoop } from './detection/loops';
-import { runVerification } from './detection/verify';
+import { writeStatus } from './state/status';
+import { isComplete, detectLoop, runVerification } from './detection';
 import { runSession } from './session';
 import { commitSession } from './integrations/git';
 import { sendNotification } from './integrations/notify';
@@ -38,34 +25,18 @@ import { buildSessionPrompt, buildTaskPrompt } from './utils/prompt-builder';
 import { FileLock } from './utils/lock';
 import { logger } from './utils/logger';
 
-/**
- * Sleep for the specified milliseconds.
- */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Handle rate limit: wait with countdown, then signal retry.
- */
-async function handleRateLimit(
-  resetAt: number | null,
-  config: CleaveConfig
-): Promise<void> {
+async function handleRateLimit(resetAt: number | null, config: CleaveConfig): Promise<void> {
   const now = Date.now();
-  let waitMs = resetAt ? Math.max(resetAt - now + 30_000, 0) : 300_000; // Default 5 min
-
-  // Cap at max wait
+  let waitMs = resetAt ? Math.max(resetAt - now + 30_000, 0) : 300_000;
   waitMs = Math.min(waitMs, config.rateLimitMaxWait * 1000);
-
   const waitSec = Math.ceil(waitMs / 1000);
   logger.warn(`⏳ Rate limit detected. Waiting ${waitSec} seconds for reset...`);
+  if (config.notify) sendNotification('cleave', `Rate limit hit. Waiting ${waitSec}s for reset...`);
 
-  if (config.notify) {
-    sendNotification('cleave', `Rate limit hit. Waiting ${waitSec}s for reset...`);
-  }
-
-  // Countdown (log every 30s)
   let remaining = waitMs;
   while (remaining > 0) {
     const mins = Math.floor(remaining / 60_000);
@@ -75,32 +46,188 @@ async function handleRateLimit(
     await sleep(tick);
     remaining -= tick;
   }
-
   process.stdout.write('\r  Rate limit should be lifted.                    \n');
 }
 
+// ── Reusable Core ──
+
+export interface RelayCoreOptions {
+  paths: RelayPaths;
+  config: CleaveConfig;
+  startSession: number;
+  maxSessions: number;
+  completionMarker: string;
+  verifyCommand: string | null;
+  verifyTimeout: number;
+  buildPrompt?: (config: CleaveConfig, sessionNum: number) => string;
+  label?: string;
+}
+
+export interface RelayCoreResult {
+  completed: boolean;
+  maxSessionsReached: boolean;
+  sessionsRun: number;
+  lastSession: number;
+}
+
 /**
- * Run the main relay loop.
+ * Reusable core relay loop. Runs sessions until completion, max sessions, or failure.
+ * Does NOT handle: init, lock acquisition, cleanup, continuation mode, banner.
+ */
+export async function runRelayCore(opts: RelayCoreOptions): Promise<RelayCoreResult> {
+  const { paths, config, completionMarker, verifyCommand, verifyTimeout } = opts;
+  const label = opts.label ? `[${opts.label}] ` : '';
+
+  let sessionCount = opts.startSession;
+  let consecutiveLoops = 0;
+  let consecutiveCrashes = 0;
+
+  while (sessionCount < opts.maxSessions) {
+    sessionCount++;
+
+    // ── Check completion ──
+    if (isComplete(paths.progressFile, completionMarker)) {
+      logger.success(`${label}✅ Task complete after session #${sessionCount - 1}!`);
+      writeStatus(paths.statusFile, config, sessionCount - 1, 'complete', 'All done');
+      if (config.notify) sendNotification('cleave ✅', `${label}Complete after ${sessionCount - 1} sessions!`);
+      if (config.gitCommit) commitSession(config.workDir, sessionCount - 1);
+      return { completed: true, maxSessionsReached: false, sessionsRun: sessionCount - opts.startSession, lastSession: sessionCount - 1 };
+    }
+
+    // ── Loop detection ──
+    const loopResult = detectLoop(paths.logsDir, paths.nextPromptFile, sessionCount);
+    if (loopResult.isLoop) {
+      consecutiveLoops++;
+      if (consecutiveLoops >= 3) {
+        logger.error(`${label}❌ 3 consecutive loops detected. Stopping.`);
+        writeStatus(paths.statusFile, config, sessionCount, 'stuck', 'Loop detected 3 times');
+        if (config.notify) sendNotification('cleave ❌', `${label}Stuck in a loop.`);
+        return { completed: false, maxSessionsReached: false, sessionsRun: sessionCount - opts.startSession, lastSession: sessionCount };
+      }
+      logger.warn(`${label}🔄 Loop detected: ${loopResult.similarity}% similar (attempt ${consecutiveLoops}/3)`);
+    } else {
+      consecutiveLoops = 0;
+    }
+
+    // ── Compact knowledge ──
+    const compactResult = compactKnowledge(paths.knowledgeFile, config.knowledgeKeepSessions);
+    if (compactResult.pruned) {
+      logger.debug(`Knowledge compacted: ${compactResult.oldLines} → ${compactResult.newLines} lines`);
+    }
+
+    // ── Build prompt ──
+    const prompt = opts.buildPrompt
+      ? opts.buildPrompt(config, sessionCount)
+      : config.tui ? buildTaskPrompt(config, sessionCount) : buildSessionPrompt(config, sessionCount);
+
+    // ── Session header ──
+    logger.session(sessionCount, opts.maxSessions);
+    writeStatus(paths.statusFile, config, sessionCount, 'running', `${label}Session #${sessionCount} active`);
+    touchSessionStart(paths, sessionCount);
+
+    // ── Run session ──
+    let result;
+    try {
+      result = await runSession(prompt, config, paths, sessionCount);
+    } catch (err: any) {
+      logger.error(`${label}Session #${sessionCount} error: ${err.message}`);
+      consecutiveCrashes++;
+      if (consecutiveCrashes >= 3) {
+        logger.error(`${label}❌ 3 consecutive failures. Stopping.`);
+        writeStatus(paths.statusFile, config, sessionCount, 'error', `Session error: ${err.message}`);
+        if (config.notify) sendNotification('cleave ❌', `${label}3 consecutive failures.`);
+        return { completed: false, maxSessionsReached: false, sessionsRun: sessionCount - opts.startSession, lastSession: sessionCount };
+      }
+      continue;
+    }
+    logger.debug(`${label}Session #${sessionCount} exited (code: ${result.exitCode})`);
+
+    // ── Handle rate limit ──
+    if (result.rateLimited) {
+      await handleRateLimit(result.rateLimitResetAt, config);
+      logger.success('Rate limit cleared. Retrying session...');
+      sessionCount--;
+      consecutiveCrashes = 0;
+      continue;
+    }
+
+    // ── Handle crashes ──
+    if (result.exitCode !== 0) {
+      consecutiveCrashes++;
+      if (consecutiveCrashes >= 3) {
+        logger.error(`${label}❌ 3 consecutive crashes (exit ${result.exitCode}). Stopping.`);
+        writeStatus(paths.statusFile, config, sessionCount, 'error', `Crashed 3 times`);
+        if (config.notify) sendNotification('cleave ❌', `${label}3 consecutive crashes.`);
+        return { completed: false, maxSessionsReached: false, sessionsRun: sessionCount - opts.startSession, lastSession: sessionCount };
+      }
+      logger.warn(`${label}⚠️  Session #${sessionCount} exit code ${result.exitCode} (crash ${consecutiveCrashes}/3)`);
+    } else {
+      consecutiveCrashes = 0;
+    }
+
+    // ── Run verification ──
+    if (verifyCommand) {
+      const verifyResult = runVerification(verifyCommand, config.workDir, verifyTimeout);
+      if (verifyResult.passed) {
+        logger.success(`${label}✅ Verification passed!`);
+        writeStatus(paths.statusFile, config, sessionCount, 'verified_complete', 'Verification passed');
+        if (config.notify) sendNotification('cleave ✅', `${label}Verified complete!`);
+        if (config.gitCommit) commitSession(config.workDir, sessionCount);
+        return { completed: true, maxSessionsReached: false, sessionsRun: sessionCount - opts.startSession, lastSession: sessionCount };
+      }
+    }
+
+    // ── Archive + git ──
+    archiveSession(paths, sessionCount, prompt);
+    if (config.gitCommit) commitSession(config.workDir, sessionCount);
+
+    // ── Report ──
+    if (fs.existsSync(paths.nextPromptFile)) {
+      logger.success(`Handoff received (${fs.statSync(paths.nextPromptFile).size} bytes)`);
+    } else {
+      logger.warn('⚠️  No NEXT_PROMPT.md — will use initial prompt + PROGRESS.md');
+    }
+
+    // ── Check completion again ──
+    if (isComplete(paths.progressFile, completionMarker)) {
+      logger.success(`${label}✅ Task complete after session #${sessionCount}!`);
+      writeStatus(paths.statusFile, config, sessionCount, 'complete', 'All done');
+      if (config.notify) sendNotification('cleave ✅', `${label}Complete after ${sessionCount} sessions!`);
+      if (config.gitCommit) commitSession(config.workDir, sessionCount);
+      return { completed: true, maxSessionsReached: false, sessionsRun: sessionCount - opts.startSession, lastSession: sessionCount };
+    }
+
+    writeStatus(paths.statusFile, config, sessionCount, 'paused', 'Between sessions');
+
+    if (sessionCount < opts.maxSessions) {
+      logger.debug(`Next session in ${config.pauseSeconds}s...`);
+      await sleep(config.pauseSeconds * 1000);
+    }
+  }
+
+  logger.warn(`${label}⚠️  Reached max sessions (${opts.maxSessions}).`);
+  return { completed: false, maxSessionsReached: true, sessionsRun: sessionCount - opts.startSession, lastSession: sessionCount };
+}
+
+// ── Standard Entry Point ──
+
+/**
+ * Run the main relay loop (entry point for `cleave run` and `cleave continue`).
  */
 export async function runRelayLoop(config: CleaveConfig): Promise<void> {
   const paths: RelayPaths = resolvePaths(config.workDir);
 
-  // Initialize relay directory (skip for continuations — preserve existing state)
+  // Initialize relay directory
   if (!config.isContinuation) {
     initRelayDir(paths);
   } else {
-    // Just ensure logs dir exists and mark active
     fs.mkdirSync(paths.logsDir, { recursive: true });
   }
 
-  // Initialize logger
   logger.init(paths.relayDir, config.verbose);
-
-  // Show banner
   logger.banner(config);
   logger.info(`cleave started (${config.tui ? 'TUI' : 'headless'} mode)`);
   logger.debug(`Work dir: ${config.workDir}`);
-  logger.debug(`Initial prompt: ${config.initialPromptFile}`);
 
   // Acquire file lock
   const lock = new FileLock(paths.relayDir);
@@ -109,8 +236,11 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
     process.exit(1);
   }
 
-  // Ensure cleanup on exit
+  // Cleanup on exit — prevent double-cleanup with flag
+  let cleaned = false;
   const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
     cleanupRelay(paths);
     lock.release();
   };
@@ -118,167 +248,37 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
   process.on('SIGINT', () => { cleanup(); process.exit(130); });
   process.on('SIGTERM', () => { cleanup(); process.exit(143); });
 
-  // ── Handle continuation mode ──
+  // Handle continuation mode
   let sessionCount: number;
   if (config.isContinuation && config.continuePrompt) {
     const prevCount = readSessionCount(paths);
-    sessionCount = prevCount; // Will be incremented to prevCount+1 at top of loop
+    sessionCount = prevCount;
     logger.info(`Continuing from session #${prevCount} — injecting new task`);
     resetForContinuation(paths, config.continuePrompt, prevCount);
-    logger.success(`State reset for continuation. PROGRESS.md → IN_PROGRESS`);
+    logger.success(`State reset for continuation.`);
   } else {
     sessionCount = config.resumeFrom;
   }
 
-  let consecutiveLoops = 0;
-  let consecutiveCrashes = 0;
+  // Run core relay loop
+  const result = await runRelayCore({
+    paths,
+    config,
+    startSession: sessionCount,
+    maxSessions: config.maxSessions,
+    completionMarker: config.completionMarker,
+    verifyCommand: config.verifyCommand,
+    verifyTimeout: config.verifyTimeout,
+  });
 
-  while (sessionCount < config.maxSessions) {
-    sessionCount++;
+  if (result.completed) return;
 
-    // ── Check completion ──
-    if (isComplete(paths.progressFile, config.completionMarker)) {
-      logger.success(`✅ Task complete after session #${sessionCount - 1}!`);
-      writeStatus(paths.statusFile, config, sessionCount - 1, 'complete', 'All done');
-      if (config.notify) sendNotification('cleave ✅', `Task complete after ${sessionCount - 1} sessions!`);
-      if (config.gitCommit) commitSession(config.workDir, sessionCount - 1);
-      return;
-    }
-
-    // ── Loop detection ──
-    const loopResult = detectLoop(paths.logsDir, paths.nextPromptFile, sessionCount);
-    if (loopResult.isLoop) {
-      consecutiveLoops++;
-      if (consecutiveLoops >= 3) {
-        logger.error(`❌ 3 consecutive loops detected. Stopping to prevent waste.`);
-        writeStatus(paths.statusFile, config, sessionCount, 'stuck', 'Loop detected 3 times');
-        if (config.notify) sendNotification('cleave ❌', 'Stopped: agent stuck in a loop.');
-        process.exit(2);
-      }
-      logger.warn(`🔄 LOOP DETECTED: Session ${sessionCount} handoff is ${loopResult.similarity}% identical to previous`);
-      logger.warn(`  Continuing despite loop (attempt ${consecutiveLoops} of 3)...`);
-    } else {
-      consecutiveLoops = 0;
-    }
-
-    // ── Compact knowledge ──
-    const compactResult = compactKnowledge(paths.knowledgeFile, config.knowledgeKeepSessions);
-    if (compactResult.pruned) {
-      logger.debug(`  Knowledge compacted: ${compactResult.oldLines} → ${compactResult.newLines} lines`);
-    }
-
-    // ── Build prompt ──
-    // TUI mode: task prompt only (handoff instructions go via --append-system-prompt)
-    // Headless mode: full prompt with handoff instructions appended
-    const prompt = config.tui
-      ? buildTaskPrompt(config, sessionCount)
-      : buildSessionPrompt(config, sessionCount);
-
-    // ── Session header ──
-    logger.session(sessionCount, config.maxSessions);
-    writeStatus(paths.statusFile, config, sessionCount, 'running', `Session #${sessionCount} active`);
-
-    // ── Touch session start marker ──
-    // In TUI mode the SessionStart hook also touches this, but we do it here too
-    // for consistency and in case the hook doesn't fire (e.g., hook installation issue)
-    touchSessionStart(paths, sessionCount);
-
-    // ── Run session ──
-    let result;
-    try {
-      result = await runSession(prompt, config, paths, sessionCount);
-    } catch (err: any) {
-      logger.error(`Session #${sessionCount} threw an unexpected error: ${err.message}`);
-      consecutiveCrashes++;
-      if (consecutiveCrashes >= 3) {
-        logger.error(`❌ 3 consecutive session failures. Stopping.`);
-        writeStatus(paths.statusFile, config, sessionCount, 'error', `Session error: ${err.message}`);
-        if (config.notify) sendNotification('cleave ❌', 'Stopped: 3 consecutive failures.');
-        process.exit(3);
-      }
-      continue;
-    }
-    logger.debug(`Session #${sessionCount} exited (code: ${result.exitCode})`);
-
-    // ── Handle rate limit ──
-    if (result.rateLimited) {
-      await handleRateLimit(result.rateLimitResetAt, config);
-      logger.success('Rate limit cleared. Retrying session...');
-      sessionCount--; // Retry same session
-      consecutiveCrashes = 0;
-      continue;
-    }
-
-    // ── Handle crashes (non-zero exit, not rate limited) ──
-    if (result.exitCode !== 0) {
-      consecutiveCrashes++;
-      if (consecutiveCrashes >= 3) {
-        logger.error(`❌ 3 consecutive session crashes (exit code ${result.exitCode}). Stopping.`);
-        writeStatus(paths.statusFile, config, sessionCount, 'error', `Crashed 3 times (exit ${result.exitCode})`);
-        if (config.notify) sendNotification('cleave ❌', 'Stopped: 3 consecutive crashes.');
-        process.exit(3);
-      }
-      logger.warn(`⚠️  Session #${sessionCount} exited with code ${result.exitCode} (crash ${consecutiveCrashes}/3)`);
-    } else {
-      consecutiveCrashes = 0;
-    }
-
-    // ── Run verification ──
-    if (config.verifyCommand) {
-      const verifyResult = runVerification(config.verifyCommand, config.workDir);
-      if (verifyResult.passed) {
-        logger.success('✅ Verification passed — task objectively complete!');
-        writeStatus(paths.statusFile, config, sessionCount, 'verified_complete', 'Verification passed');
-        if (config.notify) sendNotification('cleave ✅', `Task verified complete after ${sessionCount} sessions!`);
-        if (config.gitCommit) commitSession(config.workDir, sessionCount);
-        return;
-      }
-    }
-
-    // ── Archive session files ──
-    archiveSession(paths, sessionCount, prompt);
-
-    // ── Git commit ──
-    if (config.gitCommit) {
-      commitSession(config.workDir, sessionCount);
-    }
-
-    // ── Report ──
-    if (fs.existsSync(paths.nextPromptFile)) {
-      const size = fs.statSync(paths.nextPromptFile).size;
-      logger.success(`Handoff received (${size} bytes)`);
-    } else {
-      logger.warn('⚠️  No NEXT_PROMPT.md — will use initial prompt + PROGRESS.md');
-    }
-
-    if (fs.existsSync(paths.knowledgeFile)) {
-      const lines = fs.readFileSync(paths.knowledgeFile, 'utf8').split('\n').length;
-      logger.debug(`Knowledge base: ${lines} lines`);
-    }
-
-    // ── Check completion again ──
-    if (isComplete(paths.progressFile, config.completionMarker)) {
-      logger.success(`✅ Task complete after session #${sessionCount}!`);
-      writeStatus(paths.statusFile, config, sessionCount, 'complete', 'All done');
-      if (config.notify) sendNotification('cleave ✅', `Task complete after ${sessionCount} sessions!`);
-      if (config.gitCommit) commitSession(config.workDir, sessionCount);
-      return;
-    }
-
-    writeStatus(paths.statusFile, config, sessionCount, 'paused', 'Between sessions');
-
-    // ── Pause ──
-    if (sessionCount < config.maxSessions) {
-      logger.debug(`Next session in ${config.pauseSeconds}s...`);
-      await sleep(config.pauseSeconds * 1000);
-    }
+  if (result.maxSessionsReached) {
+    logger.debug(`Resume: cleave --resume-from ${result.lastSession} -m ${config.maxSessions + 10} ${config.initialPromptFile}`);
+    writeStatus(paths.statusFile, config, result.lastSession, 'max_sessions', 'Stopped at session limit');
+    if (config.notify) sendNotification('cleave ⚠️', `Reached ${config.maxSessions} sessions. Task incomplete.`);
+    process.exit(1);
   }
 
-  // Max sessions reached
-  console.log('');
-  logger.warn(`⚠️  Reached max sessions (${config.maxSessions}). Task not yet complete.`);
-  logger.debug(`Resume: cleave --resume-from ${sessionCount} -m ${config.maxSessions + 10} ${config.initialPromptFile}`);
-  writeStatus(paths.statusFile, config, sessionCount, 'max_sessions', 'Stopped at session limit');
-  if (config.notify) sendNotification('cleave ⚠️', `Reached ${config.maxSessions} sessions. Task incomplete.`);
-  process.exit(1);
+  process.exit(2);
 }

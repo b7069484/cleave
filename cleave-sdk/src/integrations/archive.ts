@@ -13,6 +13,9 @@ import { logger } from '../utils/logger';
 export function archiveSession(paths: RelayPaths, sessionNum: number, promptUsed: string): void {
   const logsDir = paths.logsDir;
 
+  // Ensure logs directory exists
+  fs.mkdirSync(logsDir, { recursive: true });
+
   // Archive each state file
   const filesToArchive = [
     { src: paths.progressFile, suffix: 'progress' },
@@ -26,7 +29,7 @@ export function archiveSession(paths: RelayPaths, sessionNum: number, promptUsed
       try {
         fs.copyFileSync(src, dst);
       } catch (err: any) {
-        logger.debug(`  Archive: failed to copy ${path.basename(src)}: ${err.message}`);
+        logger.warn(`Archive: failed to copy ${path.basename(src)}: ${err.message}`);
       }
     }
   }
@@ -36,6 +39,6 @@ export function archiveSession(paths: RelayPaths, sessionNum: number, promptUsed
   try {
     fs.writeFileSync(promptDst, promptUsed);
   } catch (err: any) {
-    logger.debug(`  Archive: failed to write prompt: ${err.message}`);
+    logger.warn(`Archive: failed to write prompt: ${err.message}`);
   }
 }

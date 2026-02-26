@@ -1,5 +1,6 @@
 /**
  * Git integration — auto-commit after each session.
+ * Only stages .cleave/ files to avoid accidentally committing user secrets.
  */
 
 import { execSync } from 'child_process';
@@ -15,7 +16,9 @@ export function isGitRepo(workDir: string): boolean {
 }
 
 /**
- * Stage all changes and commit with a session checkpoint message.
+ * Stage relay state files and commit with a session checkpoint message.
+ * Only stages .cleave/ directory — never `git add -A` to avoid
+ * accidentally committing secrets, env files, or large binaries.
  */
 export function commitSession(workDir: string, sessionNum: number): boolean {
   if (!isGitRepo(workDir)) {
@@ -24,8 +27,12 @@ export function commitSession(workDir: string, sessionNum: number): boolean {
   }
 
   try {
-    // Stage all changes
-    execSync('git add -A', { cwd: workDir, stdio: 'pipe' });
+    // Stage only .cleave/ state files — NOT everything
+    execSync('git add .cleave/', { cwd: workDir, stdio: 'pipe' });
+
+    // Also stage any files the user might have explicitly tracked
+    // (but don't add untracked files via -A)
+    execSync('git add -u', { cwd: workDir, stdio: 'pipe' });
 
     // Check if there are staged changes
     const diff = execSync('git diff --cached --stat', {

@@ -1,33 +1,25 @@
 #!/usr/bin/env bash
 # Cleave SDK — SessionStart hook
 #
-# Touches the .session_start marker file so the Stop hook can check
-# whether handoff files were written THIS session (not a prior one).
+# Touches the .session_start marker so the Stop hook knows which files
+# were written THIS session vs a prior one.
 #
+# v5: Pure bash JSON parsing — no Python dependency.
 # Input: JSON on stdin with session info
 # Exit:  Always 0 (never block session start)
 
-# Don't use set -e — we must always exit 0
 INPUT=$(cat 2>/dev/null || true)
 
-# Try to extract cwd from JSON input
+# Parse CWD from JSON using pure bash
 CWD=""
 if [ -n "$INPUT" ]; then
-  CWD=$(echo "$INPUT" | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    # Handle both possible structures
-    if isinstance(data, dict):
-        print(data.get('cwd', data.get('workingDir', '')))
-    else:
-        print('')
-except:
-    print('')
-" 2>/dev/null || true)
+  CWD=$(echo "$INPUT" | grep -oE '"cwd"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"cwd"\s*:\s*"//;s/"$//')
+  if [ -z "$CWD" ]; then
+    CWD=$(echo "$INPUT" | grep -oE '"workingDir"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"workingDir"\s*:\s*"//;s/"$//')
+  fi
 fi
 
-# Fallback: try PWD or CLEAVE_WORK_DIR env var
+# Fallback: env vars
 if [ -z "$CWD" ]; then
   CWD="${CLEAVE_WORK_DIR:-${PWD:-}}"
 fi
@@ -40,15 +32,6 @@ CLEAVE_DIR="$CWD/.cleave"
 
 if [ -d "$CLEAVE_DIR" ]; then
   touch "$CLEAVE_DIR/.session_start" 2>/dev/null || true
-
-  # Increment session counter
-  COUNTER_FILE="$CLEAVE_DIR/.session_counter"
-  if [ -f "$COUNTER_FILE" ]; then
-    COUNT=$(cat "$COUNTER_FILE" 2>/dev/null || echo "0")
-    echo $((COUNT + 1)) > "$COUNTER_FILE" 2>/dev/null || true
-  else
-    echo "1" > "$COUNTER_FILE" 2>/dev/null || true
-  fi
 fi
 
 exit 0
