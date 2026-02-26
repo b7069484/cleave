@@ -1,100 +1,146 @@
-#!/bin/bash
-# ─────────────────────────────────────────────────────────────────────────────
-# Cleave Stop Hook — Enforces handoff file writing before session exit
-# ─────────────────────────────────────────────────────────────────────────────
+#!/usr/bin/env bash
+# Cleave SDK — Stop hook enforcement (shell version for TUI mode)
 #
-# This hook fires when Claude tries to finish responding. It checks whether
-# the session is a cleave relay session and whether the required handoff
-# files have been written. If not, it blocks the exit (exit code 2) and
-# tells Claude to complete the handoff procedure.
+# Prevents Claude from exiting until handoff files are written.
+# Input:  JSON on stdin with session/tool info
+# Output: JSON on stdout if blocking
+# Exit:   0 = allow exit, 2 = block exit
 #
-# Exit codes:
-#   0 — Allow exit (not a relay session, or handoff complete, or task done)
-#   2 — Block exit (handoff files missing, Claude must write them)
-# ─────────────────────────────────────────────────────────────────────────────
+# v5.1: Supports both standard relay (.cleave/) and pipeline stages
+#       (.cleave/stages/<name>/). Auto-detects which one is active.
+#       Also validates that NEXT_PROMPT.md is not empty.
 
-set -euo pipefail
+INPUT=$(cat 2>/dev/null || true)
 
-# Read hook input from stdin
-INPUT=$(cat)
+# Parse CWD from JSON using pure bash (extract "cwd" or "workingDir" value)
+CWD=""
+if [ -n "$INPUT" ]; then
+  # Match "cwd":"<value>" or "cwd": "<value>" — handles JSON with/without spaces
+  CWD=$(echo "$INPUT" | grep -oE '"cwd"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"cwd"\s*:\s*"//;s/"$//')
+  if [ -z "$CWD" ]; then
+    CWD=$(echo "$INPUT" | grep -oE '"workingDir"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"workingDir"\s*:\s*"//;s/"$//')
+  fi
+fi
 
-# Extract working directory from hook input
-CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd',''))" 2>/dev/null || echo "")
+# Fallback: env vars
+if [ -z "$CWD" ]; then
+  CWD="${CLEAVE_WORK_DIR:-${PWD:-}}"
+fi
 
 if [ -z "$CWD" ]; then
-    # Can't determine working directory — allow exit
-    exit 0
+  # Can't determine cwd — allow exit to avoid deadlock
+  exit 0
 fi
 
-RELAY_DIR="$CWD/.cleave"
+CLEAVE_DIR="$CWD/.cleave"
 
-# ── Not a cleave session? Allow exit. ──
-if [ ! -d "$RELAY_DIR" ]; then
-    exit 0
+# If no .cleave directory at all, allow exit
+if [ ! -d "$CLEAVE_DIR" ]; then
+  exit 0
 fi
 
-# Check for the relay marker file (created by the launcher or /resume command)
-if [ ! -f "$RELAY_DIR/.active_relay" ]; then
-    exit 0
-fi
+# ── Determine the active handoff directory ──
+# Pipeline stages use .cleave/stages/<name>/, standard relays use .cleave/
+# Check for active pipeline stage first (most recently modified .session_start)
+HANDOFF_DIR=""
 
-PROGRESS_FILE="$RELAY_DIR/PROGRESS.md"
-NEXT_PROMPT_FILE="$RELAY_DIR/NEXT_PROMPT.md"
-KNOWLEDGE_FILE="$RELAY_DIR/KNOWLEDGE.md"
-
-# ── Task fully complete? Allow exit. ──
-if [ -f "$PROGRESS_FILE" ]; then
-    if head -10 "$PROGRESS_FILE" | grep -qi "ALL_COMPLETE"; then
-        # Task is done — clean up the active marker and allow exit
-        rm -f "$RELAY_DIR/.active_relay"
-        exit 0
+if [ -d "$CLEAVE_DIR/stages" ]; then
+  # Find the stage directory with the most recent .session_start marker
+  LATEST_STAGE=""
+  LATEST_TIME=0
+  for STAGE_DIR in "$CLEAVE_DIR/stages"/*/; do
+    if [ -f "${STAGE_DIR}.session_start" ]; then
+      # Get modification time as epoch seconds (works on macOS and Linux)
+      if stat -f %m "${STAGE_DIR}.session_start" >/dev/null 2>&1; then
+        MTIME=$(stat -f %m "${STAGE_DIR}.session_start")
+      else
+        MTIME=$(stat -c %Y "${STAGE_DIR}.session_start" 2>/dev/null || echo 0)
+      fi
+      if [ "$MTIME" -gt "$LATEST_TIME" ] 2>/dev/null; then
+        LATEST_TIME="$MTIME"
+        LATEST_STAGE="$STAGE_DIR"
+      fi
     fi
+  done
+
+  if [ -n "$LATEST_STAGE" ]; then
+    HANDOFF_DIR="$LATEST_STAGE"
+  fi
 fi
 
-# ── Check if handoff files were updated this session ──
-# We check modification times against the session start marker
-SESSION_START_MARKER="$RELAY_DIR/.session_start"
+# Fallback to standard relay directory
+if [ -z "$HANDOFF_DIR" ]; then
+  HANDOFF_DIR="$CLEAVE_DIR"
+fi
 
-if [ ! -f "$SESSION_START_MARKER" ]; then
-    # No session start marker — can't verify, allow exit
+# Remove trailing slash for consistency
+HANDOFF_DIR="${HANDOFF_DIR%/}"
+
+PROGRESS="$HANDOFF_DIR/PROGRESS.md"
+KNOWLEDGE="$HANDOFF_DIR/KNOWLEDGE.md"
+NEXT_PROMPT="$HANDOFF_DIR/NEXT_PROMPT.md"
+SESSION_START="$HANDOFF_DIR/.session_start"
+ACTIVE_RELAY="$CLEAVE_DIR/.active_relay"
+
+# If no active relay marker, this isn't a cleave-managed session — allow exit
+if [ ! -f "$ACTIVE_RELAY" ]; then
+  # Also check for active pipeline marker
+  if [ ! -f "$CLEAVE_DIR/.active_pipeline" ]; then
     exit 0
+  fi
 fi
 
-MISSING_FILES=""
-STALE_FILES=""
+# Check if task is fully complete (check for common completion markers)
+if [ -f "$PROGRESS" ] && grep -qi "ALL_COMPLETE\|TASK_FULLY_COMPLETE\|IMAGE_AUDIT_COMPLETE\|MAPPINGS_FIXED\|LOADER_FIXED\|VIDEOS_FIXED\|PREVIEWS_FIXED\|ALL_VERIFIED" "$PROGRESS" 2>/dev/null; then
+  exit 0
+fi
 
-# Check each required file exists and was modified after session start
-for filepath in "$PROGRESS_FILE" "$NEXT_PROMPT_FILE" "$KNOWLEDGE_FILE"; do
-    filename=$(basename "$filepath")
-    if [ ! -f "$filepath" ]; then
-        MISSING_FILES="$MISSING_FILES $filename"
-    elif [ "$filepath" -ot "$SESSION_START_MARKER" ]; then
-        STALE_FILES="$STALE_FILES $filename"
-    fi
+# Check that all three handoff files exist, are newer than session start, and are non-empty
+MISSING=""
+STALE=""
+EMPTY=""
+
+for FNAME in "PROGRESS.md" "KNOWLEDGE.md" "NEXT_PROMPT.md"; do
+  FPATH="$HANDOFF_DIR/$FNAME"
+  if [ ! -f "$FPATH" ]; then
+    MISSING="$MISSING $FNAME"
+  elif [ -f "$SESSION_START" ] && [ "$SESSION_START" -nt "$FPATH" ]; then
+    STALE="$STALE $FNAME"
+  elif [ ! -s "$FPATH" ]; then
+    # File exists but is empty (0 bytes)
+    EMPTY="$EMPTY $FNAME"
+  fi
 done
 
-# ── All files present and fresh? Allow exit. ──
-if [ -z "$MISSING_FILES" ] && [ -z "$STALE_FILES" ]; then
-    exit 0
+# If all files present, fresh, and non-empty, allow exit
+if [ -z "$MISSING" ] && [ -z "$STALE" ] && [ -z "$EMPTY" ]; then
+  exit 0
 fi
 
-# ── Handoff incomplete — block exit ──
-ERROR_MSG="CLEAVE HANDOFF INCOMPLETE — You cannot exit yet.\n\n"
+# Build block reason
+REASON="CLEAVE HANDOFF INCOMPLETE. "
 
-if [ -n "$MISSING_FILES" ]; then
-    ERROR_MSG="${ERROR_MSG}Missing files:${MISSING_FILES}\n"
+if [ -n "$MISSING" ]; then
+  REASON="${REASON}Missing:${MISSING}. "
+fi
+if [ -n "$STALE" ]; then
+  REASON="${REASON}Not updated this session:${STALE}. "
+fi
+if [ -n "$EMPTY" ]; then
+  REASON="${REASON}Empty (must have content):${EMPTY}. "
 fi
 
-if [ -n "$STALE_FILES" ]; then
-    ERROR_MSG="${ERROR_MSG}Not updated this session:${STALE_FILES}\n"
+# Determine the correct path prefix for instructions
+if [ "$HANDOFF_DIR" != "$CLEAVE_DIR" ]; then
+  # Pipeline stage — extract stage name
+  STAGE_NAME=$(basename "$HANDOFF_DIR")
+  FILE_PREFIX=".cleave/stages/$STAGE_NAME"
+else
+  FILE_PREFIX=".cleave"
 fi
 
-ERROR_MSG="${ERROR_MSG}\nYou MUST complete the handoff procedure before exiting:\n"
-ERROR_MSG="${ERROR_MSG}1. Update .cleave/PROGRESS.md with current status and exact stop point\n"
-ERROR_MSG="${ERROR_MSG}2. Update .cleave/KNOWLEDGE.md — promote insights to Core, append session notes\n"
-ERROR_MSG="${ERROR_MSG}3. Write .cleave/NEXT_PROMPT.md — complete prompt for next session\n"
-ERROR_MSG="${ERROR_MSG}4. Print RELAY_HANDOFF_COMPLETE or TASK_FULLY_COMPLETE\n"
-ERROR_MSG="${ERROR_MSG}\nIf the task is fully done, set STATUS: ALL_COMPLETE in PROGRESS.md."
+REASON="${REASON}You MUST: 1) Update ${FILE_PREFIX}/PROGRESS.md with status and stop point. 2) Update ${FILE_PREFIX}/KNOWLEDGE.md with session notes. 3) Write ${FILE_PREFIX}/NEXT_PROMPT.md for next session (must not be empty). 4) Print RELAY_HANDOFF_COMPLETE. If ALL work is done, set STATUS: ALL_COMPLETE in PROGRESS.md."
 
-echo -e "$ERROR_MSG" >&2
+# Output block decision and exit 2
+echo "{\"decision\":\"block\",\"reason\":\"$REASON\"}"
 exit 2
