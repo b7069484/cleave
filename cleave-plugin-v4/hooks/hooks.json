@@ -1,28 +1,4 @@
 {
-  "description": "Cleave session relay hooks — enforces handoff file writing before session exit",
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/stop-check.sh",
-            "timeout": 10,
-            "statusMessage": "Checking cleave handoff files..."
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
+  "description": "Cleave plugin hooks — intentionally empty. Hook enforcement is handled by the Cleave SDK via generateSettingsFile() which copies scripts to /tmp/ to avoid Claude Code's space-in-path bug. Plugin hooks using ${CLAUDE_PLUGIN_ROOT} break when installed in paths with spaces (e.g., 'Cleave Code').",
+  "hooks": {}
 }

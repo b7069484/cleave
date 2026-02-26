@@ -1,8 +1,10 @@
 /**
  * Session runner — two modes:
  *
- * TUI mode (default): Spawns `claude` as a child process with stdio inherited,
- *   so the user sees the full Claude Code TUI.
+ * TUI mode (default): Spawns `claude -p` (print mode) as a child process.
+ *   Claude processes the prompt, streams output to the terminal, and exits
+ *   when done. This is critical for relay chaining — interactive TUI mode
+ *   never auto-exits, which blocks the relay loop from starting the next session.
  *
  * Headless mode (--no-tui): Uses the Agent SDK query() function for
  *   programmatic control. No TUI — text streams to stdout.
@@ -39,7 +41,14 @@ function writePromptFile(relayDir: string, prompt: string): string {
 }
 
 /**
- * Run a session in TUI mode — spawns `claude` with inherited stdio.
+ * Run a session in TUI mode — spawns `claude -p` (print mode) with
+ * stdout/stderr inherited so the user sees real-time progress.
+ *
+ * CRITICAL: We use `-p` (print mode) instead of interactive TUI because
+ * interactive TUI never auto-exits after processing — it returns to the
+ * `❯` idle prompt and waits for more input. This blocks the relay loop
+ * from ever starting the next session. With `-p`, Claude processes the
+ * prompt, streams output, and exits when done.
  */
 async function runTuiSession(
   taskPrompt: string,
@@ -59,6 +68,8 @@ async function runTuiSession(
   const handoffInstructions = buildHandoffInstructions(config);
 
   const args: string[] = [
+    '-p',  // Print mode: process prompt and EXIT (critical for relay chaining)
+    '--verbose',  // Show tool calls and intermediate steps
     `You are session #${sessionNum} of an automated Cleave relay. ` +
     `Read the file "${promptFilePath}" for your full task instructions. ` +
     `Execute those instructions immediately. Do NOT ask for confirmation.`,
@@ -70,12 +81,12 @@ async function runTuiSession(
     args.push('--dangerously-skip-permissions');
   }
 
-  logger.debug(`Launching TUI session #${sessionNum}`);
+  logger.debug(`Launching session #${sessionNum} (print mode)`);
   logger.debug(`  Prompt file: ${promptFilePath}`);
 
   try {
     const child = spawn('claude', args, {
-      stdio: 'inherit',
+      stdio: ['ignore', 'inherit', 'inherit'],  // No stdin needed in print mode
       cwd: config.workDir,
       env: {
         ...process.env,
@@ -93,7 +104,7 @@ async function runTuiSession(
     });
   } catch (err: any) {
     result.exitCode = 1;
-    logger.error(`TUI session error: ${err.message}`);
+    logger.error(`Session error: ${err.message}`);
   }
 
   // Detect rate limiting from exit patterns
