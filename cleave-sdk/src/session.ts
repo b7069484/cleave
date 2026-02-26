@@ -142,11 +142,16 @@ async function runTuiSession(
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   try {
+    // Strip CLAUDECODE env var so the child claude process doesn't
+    // think it's nested inside another session and refuse to start.
+    const childEnv = { ...process.env };
+    delete childEnv.CLAUDECODE;
+
     const child = spawn('claude', args, {
       stdio: 'inherit',
       cwd: config.workDir,
       env: {
-        ...process.env,
+        ...childEnv,
         CLEAVE_SESSION: String(sessionNum),
         CLEAVE_WORK_DIR: config.workDir,
       },
