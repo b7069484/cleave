@@ -42,57 +42,44 @@ function writePromptFile(relayDir: string, prompt: string): string {
 
 /**
  * Check if handoff files are complete and ready for relay.
- * Returns true if all three files exist, are fresh (written after session start),
- * and are non-empty. Also returns true if a completion marker is found.
+ *
+ * Detection strategy (in order):
+ * 1. Completion marker in PROGRESS.md — task is fully done
+ * 2. .handoff_signal file exists and is fresh — Claude wrote it as Step 4
+ *
+ * IMPORTANT: We do NOT infer handoff from file presence alone.
+ * KNOWLEDGE.md is initialized with boilerplate (always non-empty), so
+ * checking "all files present + fresh + non-empty" would SIGTERM Claude
+ * mid-session the moment it touches PROGRESS.md + NEXT_PROMPT.md.
+ * An explicit signal is required.
  */
 function isHandoffReady(paths: RelayPaths, completionMarker: string): boolean {
   try {
-    const progressFile = paths.progressFile;
-    const knowledgeFile = paths.knowledgeFile;
-    const nextPromptFile = paths.nextPromptFile;
-    const sessionStart = paths.sessionStartMarker;
-
-    // Check for completion marker first
-    if (fs.existsSync(progressFile)) {
-      const content = fs.readFileSync(progressFile, 'utf8').toLowerCase();
+    // 1. Check for completion marker (task fully done)
+    if (fs.existsSync(paths.progressFile)) {
+      const content = fs.readFileSync(paths.progressFile, 'utf8').toLowerCase();
       const marker = completionMarker.toLowerCase();
       if (content.includes(marker) || content.includes('task_fully_complete')) {
         return true;
       }
     }
 
-    // All three files must exist
-    if (!fs.existsSync(progressFile) || !fs.existsSync(knowledgeFile) || !fs.existsSync(nextPromptFile)) {
-      return false;
-    }
-
-    // All three must be non-empty
-    if (fs.statSync(progressFile).size === 0 ||
-        fs.statSync(knowledgeFile).size === 0 ||
-        fs.statSync(nextPromptFile).size === 0) {
-      return false;
-    }
-
-    // All three must be newer than session start (if marker exists)
-    if (fs.existsSync(sessionStart)) {
-      const startTime = fs.statSync(sessionStart).mtimeMs;
-      if (fs.statSync(progressFile).mtimeMs <= startTime) return false;
-      if (fs.statSync(knowledgeFile).mtimeMs <= startTime) return false;
-      if (fs.statSync(nextPromptFile).mtimeMs <= startTime) return false;
-    }
-
-    // Check for explicit handoff markers in progress file
-    const progressContent = fs.readFileSync(progressFile, 'utf8');
-    if (progressContent.includes('RELAY_HANDOFF_COMPLETE') ||
-        progressContent.includes('HANDOFF_COMPLETE')) {
+    // 2. Check for explicit handoff signal file
+    if (fs.existsSync(paths.handoffSignalFile)) {
+      // Verify it was written during THIS session (not leftover from a previous one)
+      if (fs.existsSync(paths.sessionStartMarker)) {
+        const startTime = fs.statSync(paths.sessionStartMarker).mtimeMs;
+        const signalTime = fs.statSync(paths.handoffSignalFile).mtimeMs;
+        if (signalTime > startTime) {
+          return true;
+        }
+        // Signal file is stale (from a prior session) — ignore it
+        return false;
+      }
+      // No session start marker — trust the signal file
       return true;
     }
 
-    // DO NOT return true just because all files are present/fresh/non-empty.
-    // KNOWLEDGE.md is initialized with boilerplate (always non-empty), so the
-    // moment Claude touches PROGRESS.md + NEXT_PROMPT.md during normal work,
-    // this would fire and SIGTERM the TUI mid-session. Only explicit handoff
-    // signals (completion marker or HANDOFF_COMPLETE) should trigger a kill.
     return false;
   } catch {
     return false;
