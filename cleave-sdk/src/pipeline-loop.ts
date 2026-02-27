@@ -273,6 +273,7 @@ async function runStage(
     maxSessions: stage.maxSessions,
     completionMarker: stage.completion,
     verifyCommand: stage.verify || null,
+    activeStage: stage.name,
   };
 
   // Build stage-aware handoff instructions

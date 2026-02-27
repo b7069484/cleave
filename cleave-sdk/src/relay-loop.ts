@@ -257,8 +257,14 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
   // Acquire file lock
   const lock = new FileLock(paths.relayDir);
   if (!lock.acquire()) {
-    logger.error(`Error: another cleave session is already running in ${config.workDir}`);
+    logger.error('Error: Another cleave session is already running in this directory.');
+    logger.error('  Only one relay can run per working directory at a time.');
+    logger.error('  If the previous session crashed, delete .cleave/.lock to recover.');
     process.exit(1);
+  }
+
+  if (fs.existsSync(paths.activeRelayMarker)) {
+    logger.warn('Found stale .active_relay from previous crash — will be overwritten');
   }
 
   // Cleanup on exit — prevent double-cleanup with flag

@@ -150,6 +150,7 @@ async function runTuiSession(
         ...childEnv,
         CLEAVE_SESSION: String(sessionNum),
         CLEAVE_WORK_DIR: config.workDir,
+        ...(config.activeStage ? { CLEAVE_ACTIVE_STAGE: config.activeStage } : {}),
       },
     });
 
@@ -291,8 +292,9 @@ async function runHeadlessSession(
     const sdk = await import('@anthropic-ai/claude-agent-sdk');
     query = sdk.query;
   } catch (err: any) {
-    logger.error(`Failed to import @anthropic-ai/claude-agent-sdk: ${err.message}`);
-    logger.error('Install it with: npm install @anthropic-ai/claude-agent-sdk');
+    logger.error('Error: Claude Code Agent SDK not found.');
+    logger.error('  Headless mode (--no-tui) requires: npm install @anthropic-ai/claude-agent-sdk');
+    logger.error('  Or remove --no-tui to use interactive TUI mode instead.');
     throw new Error(`Agent SDK not available: ${err.message}`);
   }
 

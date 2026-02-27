@@ -46,8 +46,21 @@ export function compactKnowledge(
     fs.writeFileSync(knowledgePath + '.bak', content);
   } catch { /* best effort */ }
 
-  // Keep everything before Session Log section
-  const headerSection = lines.slice(0, logHeaderIndex + 2); // header + description line
+  // Keep everything up to and including Session Log header + its description
+  const headerLines: string[] = [];
+  for (let i = 0; i <= logHeaderIndex; i++) {
+    headerLines.push(lines[i]);
+  }
+  // Include the description line (next non-empty line that isn't a session entry)
+  let descIdx = logHeaderIndex + 1;
+  while (descIdx < lines.length && lines[descIdx].trim() === '') {
+    headerLines.push(lines[descIdx]);
+    descIdx++;
+  }
+  if (descIdx < lines.length && !lines[descIdx].startsWith('###')) {
+    headerLines.push(lines[descIdx]);
+  }
+  const headerSection = headerLines;
 
   // Find entries WITHIN the session log section only
   const logEntryIndices = entryIndices.filter(i => i > logHeaderIndex);

@@ -36,15 +36,24 @@ if [ -d "$CLEAVE_DIR" ]; then
   # Clean handoff signal from previous session
   rm -f "$CLEAVE_DIR/.handoff_signal" 2>/dev/null || true
 
-  # Also touch .session_start in any active pipeline stage directories
-  # The pipeline loop creates these dirs before spawning sessions
+  # Also touch .session_start in active pipeline stage directories
+  # If CLEAVE_ACTIVE_STAGE is set, only touch that stage; otherwise fall back
+  # to touching all stages with .active_relay markers.
   if [ -d "$CLEAVE_DIR/stages" ]; then
-    for STAGE_DIR in "$CLEAVE_DIR/stages"/*/; do
-      if [ -d "$STAGE_DIR" ] && [ -f "${STAGE_DIR}.active_relay" ]; then
+    if [ -n "${CLEAVE_ACTIVE_STAGE:-}" ]; then
+      STAGE_DIR="$CLEAVE_DIR/stages/$CLEAVE_ACTIVE_STAGE/"
+      if [ -d "$STAGE_DIR" ]; then
         touch "${STAGE_DIR}.session_start" 2>/dev/null || true
         rm -f "${STAGE_DIR}.handoff_signal" 2>/dev/null || true
       fi
-    done
+    else
+      for STAGE_DIR in "$CLEAVE_DIR/stages"/*/; do
+        if [ -d "$STAGE_DIR" ] && [ -f "${STAGE_DIR}.active_relay" ]; then
+          touch "${STAGE_DIR}.session_start" 2>/dev/null || true
+          rm -f "${STAGE_DIR}.handoff_signal" 2>/dev/null || true
+        fi
+      done
+    fi
   fi
 fi
 

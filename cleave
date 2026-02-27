@@ -45,7 +45,7 @@ VERIFY_CMD=""              # Optional verification command
 HANDOFF_THRESHOLD=60       # Context % to begin handoff (stop productive work)
 HANDOFF_DEADLINE=70        # Context % hard wall (must finish handoff before this)
 SUBAGENT_HINT=false        # Hint Claude Code to use subagents for heavy tasks
-SKIP_PERMISSIONS=true      # Pass --dangerously-skip-permissions to claude
+SKIP_PERMISSIONS=false     # Pass --dangerously-skip-permissions to claude
 KNOWLEDGE_KEEP_SESSIONS=5  # Rolling window: keep last N session entries in knowledge log
 
 # ── Colors ────────────────────────────────────────────────────────────────────

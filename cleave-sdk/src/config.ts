@@ -96,6 +96,9 @@ export interface CleaveConfig {
 
   /** Skip this stage in the pipeline */
   skipStage: string | null;
+
+  /** Currently active pipeline stage name (set during pipeline execution) */
+  activeStage: string | null;
 }
 
 export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
@@ -108,7 +111,7 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   resumeFrom: 0,
   verifyCommand: null,
   verifyTimeout: 120,
-  safeMode: false,
+  safeMode: true,
   verbose: false,
   handoffThreshold: 60,
   handoffDeadline: 70,
@@ -122,9 +125,10 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   pipelineConfig: null,
   resumeStage: null,
   skipStage: null,
+  activeStage: null,
 };
 
-export const VERSION = '5.2.0';
+export const VERSION = '5.3.0';
 
 /**
  * Validate config values at startup. Throws on invalid values.
