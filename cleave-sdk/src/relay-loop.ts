@@ -192,9 +192,19 @@ export async function runRelayCore(opts: RelayCoreOptions): Promise<RelayCoreRes
       }
     }
 
-    // ── Archive + git ──
-    archiveSession(paths, sessionCount, prompt);
-    if (config.gitCommit) commitSession(config.workDir, sessionCount);
+    // ── Archive + git (guarded — must not crash the relay) ──
+    try {
+      archiveSession(paths, sessionCount, prompt);
+    } catch (err: any) {
+      logger.warn(`${label}⚠️  Archive failed (non-fatal): ${err.message}`);
+    }
+    if (config.gitCommit) {
+      try {
+        commitSession(config.workDir, sessionCount);
+      } catch (err: any) {
+        logger.warn(`${label}⚠️  Git commit failed (non-fatal): ${err.message}`);
+      }
+    }
 
     // ── Report ──
     if (fs.existsSync(paths.nextPromptFile)) {

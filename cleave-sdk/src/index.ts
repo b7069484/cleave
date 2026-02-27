@@ -18,6 +18,18 @@ import { parseArgs } from './cli';
 import { runRelayLoop } from './relay-loop';
 import { runPipelineLoop } from './pipeline-loop';
 
+// Catch unhandled errors so the pipeline doesn't silently die
+process.on('uncaughtException', (err) => {
+  console.error(`\n[CLEAVE FATAL] Uncaught exception: ${err.message}`);
+  console.error(err.stack || '(no stack)');
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(`\n[CLEAVE FATAL] Unhandled promise rejection: ${reason}`);
+  if (reason instanceof Error && reason.stack) console.error(reason.stack);
+  process.exit(1);
+});
+
 async function main() {
   const config = parseArgs(process.argv);
 
@@ -28,10 +40,8 @@ async function main() {
       await runRelayLoop(config);
     }
   } catch (err: any) {
-    console.error(`\nFatal error: ${err.message}`);
-    if (err.stack && process.argv.includes('-v')) {
-      console.error(err.stack);
-    }
+    console.error(`\n[CLEAVE FATAL] ${err.message}`);
+    console.error(err.stack || '(no stack)');
     process.exit(1);
   }
 }

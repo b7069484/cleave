@@ -166,8 +166,15 @@ export async function runPipelineLoop(config: CleaveConfig): Promise<void> {
         logger.info(`🔄 Retrying stage "${stage.name}" (attempt ${attempt}/${maxAttempts})`);
       }
 
-      // Run this stage
-      const result = await runStage(config, pipeline, stage, stageNum, totalStages, state, attempt);
+      // Run this stage (guarded — catch unexpected crashes)
+      let result: RelayCoreResult;
+      try {
+        result = await runStage(config, pipeline, stage, stageNum, totalStages, state, attempt);
+      } catch (err: any) {
+        logger.error(`Stage "${stage.name}" crashed unexpectedly: ${err.message}`);
+        logger.error(`Stack: ${err.stack || 'no stack'}`);
+        result = { completed: false, maxSessionsReached: false, sessionsRun: 0, lastSession: 0 };
+      }
 
       if (result.completed) {
         stageCompleted = true;
