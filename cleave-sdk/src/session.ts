@@ -81,16 +81,19 @@ function isHandoffReady(paths: RelayPaths, completionMarker: string): boolean {
       if (fs.statSync(nextPromptFile).mtimeMs <= startTime) return false;
     }
 
-    // Check for RELAY_HANDOFF_COMPLETE in progress file
+    // Check for explicit handoff markers in progress file
     const progressContent = fs.readFileSync(progressFile, 'utf8');
     if (progressContent.includes('RELAY_HANDOFF_COMPLETE') ||
-        progressContent.includes('HANDOFF_COMPLETE') ||
-        progressContent.includes('STATUS: IN_PROGRESS')) {
+        progressContent.includes('HANDOFF_COMPLETE')) {
       return true;
     }
 
-    // All files present, fresh, and non-empty — good enough
-    return true;
+    // DO NOT return true just because all files are present/fresh/non-empty.
+    // KNOWLEDGE.md is initialized with boilerplate (always non-empty), so the
+    // moment Claude touches PROGRESS.md + NEXT_PROMPT.md during normal work,
+    // this would fire and SIGTERM the TUI mid-session. Only explicit handoff
+    // signals (completion marker or HANDOFF_COMPLETE) should trigger a kill.
+    return false;
   } catch {
     return false;
   }
