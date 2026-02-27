@@ -69,14 +69,16 @@ The EXACT prompt for the next session (fed verbatim). Include:
 - Setup steps (venv, env vars, etc.)
 - Exactly where to resume
 - Reference KNOWLEDGE.md: tell next session to read it
-- These same handoff instructions
+- Do NOT copy these relay instructions into NEXT_PROMPT.md — they are appended automatically by the relay system
 - End with: "When at ~${config.handoffThreshold}% context, STOP and do the handoff procedure."
 
-**STEP 4 — Print exactly:** \`RELAY_HANDOFF_COMPLETE\`
-Then stop immediately.
+**STEP 4 — Signal completion:**
+Write the text \`HANDOFF_COMPLETE\` to the file \`.cleave/.handoff_signal\` (create or overwrite).
+Then print \`RELAY_HANDOFF_COMPLETE\` to confirm, and stop immediately.
 
-If ALL work is done, write \`STATUS: ${config.completionMarker}\` in PROGRESS.md
-and print \`TASK_FULLY_COMPLETE\` instead.
+If ALL work is done, write \`STATUS: ${config.completionMarker}\` in PROGRESS.md,
+write \`TASK_FULLY_COMPLETE\` to \`.cleave/.handoff_signal\`,
+and print \`TASK_FULLY_COMPLETE\` to confirm.
 `;
 }
 
@@ -153,7 +155,13 @@ export function buildTaskPrompt(config: CleaveConfig, sessionNum: number): strin
  * Used in headless/query() mode.
  */
 export function buildSessionPrompt(config: CleaveConfig, sessionNum: number): string {
-  return buildBasePrompt(config, sessionNum) + buildHandoffInstructions(config);
+  const base = buildBasePrompt(config, sessionNum);
+  // Don't double-append if the prompt already contains handoff instructions
+  // (happens when NEXT_PROMPT.md from prior session included them)
+  if (base.includes('AUTOMATED SESSION RELAY')) {
+    return base;
+  }
+  return base + buildHandoffInstructions(config);
 }
 
 /**
@@ -185,5 +193,9 @@ When your stage's work is FULLY done, set \`STATUS: ${stageCompletion}\` in
 add them to your Core Knowledge section — they'll be promoted to shared knowledge.
 
 **CONTEXT BUDGET:** Same rules — stop at ~${config.handoffThreshold}% and do the handoff.
+
+**HANDOFF SIGNAL:** When you complete the handoff procedure, write \`HANDOFF_COMPLETE\`
+to \`.cleave/stages/${stageName}/.handoff_signal\` as your final action.
+If the stage is fully done, write \`TASK_FULLY_COMPLETE\` to that file instead.
 `;
 }
