@@ -22,7 +22,8 @@ function addSharedOptions(cmd: Command): Command {
     .option('--no-notify', 'Disable desktop notifications')
     .option('--verify <command>', 'Verification command (exit 0 = done)')
     .option('--verify-timeout <seconds>', 'Timeout for verification command', String(DEFAULT_CONFIG.verifyTimeout))
-    .option('--safe-mode', 'Require permission prompts', DEFAULT_CONFIG.safeMode)
+    .option('--safe-mode', 'Require permission prompts (default)', DEFAULT_CONFIG.safeMode)
+    .option('--dangerously-skip-permissions', 'Skip Claude Code permission prompts')
     .option('-v, --verbose', 'Detailed logging', DEFAULT_CONFIG.verbose)
     .option('--no-tui', 'Headless mode — use Agent SDK query() instead of TUI')
     .option('--session-timeout <seconds>', 'Max seconds per session, 0=unlimited (default: 1800)', String(DEFAULT_CONFIG.sessionTimeout));
@@ -66,7 +67,7 @@ function validateAndBuildConfig(opts: any, program: Command): Partial<CleaveConf
     notify: opts.notify ?? DEFAULT_CONFIG.notify,
     verifyCommand: opts.verify || null,
     verifyTimeout,
-    safeMode: opts.safeMode ?? DEFAULT_CONFIG.safeMode,
+    safeMode: opts.dangerouslySkipPermissions ? false : (opts.safeMode ?? DEFAULT_CONFIG.safeMode),
     verbose: opts.verbose ?? DEFAULT_CONFIG.verbose,
     handoffThreshold: DEFAULT_CONFIG.handoffThreshold,
     handoffDeadline: DEFAULT_CONFIG.handoffDeadline,

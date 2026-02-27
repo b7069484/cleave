@@ -76,7 +76,8 @@ ${BOLD}OPTIONS${NC}
   -r, --resume-from N       Resume from session N (reuse last handoff)
       --verify CMD          Verify completion with CMD (exit 0 = done)
       --subagents           Hint Claude to spawn subagents for heavy subtasks
-      --safe-mode           Require Claude Code permission prompts (no --dangerously-skip-permissions)
+      --dangerously-skip-permissions  Skip Claude Code permission prompts (unsafe for unattended use)
+      --safe-mode           (default) Require Claude Code permission prompts
   -v, --verbose             Detailed logging
   -h, --help                Show this help
       --version             Show version
@@ -125,6 +126,7 @@ while [[ $# -gt 0 ]]; do
             RESUME_FROM="$2"; shift 2 ;;
         --verify) VERIFY_CMD="$2"; shift 2 ;;
         --subagents) SUBAGENT_HINT=true; shift ;;
+        --dangerously-skip-permissions) SKIP_PERMISSIONS=true; shift ;;
         --safe-mode) SKIP_PERMISSIONS=false; shift ;;
         -v|--verbose) VERBOSE=true; shift ;;
         -h|--help) usage ;;
@@ -652,8 +654,8 @@ fi
 if [ "$SUBAGENT_HINT" = true ]; then
 echo -e "${BOLD}║${NC}  Subagents:    ${BLUE}enabled${NC}"
 fi
-if [ "$SKIP_PERMISSIONS" = false ]; then
-echo -e "${BOLD}║${NC}  Safe mode:    ${YELLOW}ON (permission prompts enabled)${NC}"
+if [ "$SKIP_PERMISSIONS" = true ]; then
+echo -e "${BOLD}║${NC}  Permissions:  ${RED}SKIPPED (--dangerously-skip-permissions)${NC}"
 fi
 if [ "$RESUME_FROM" -gt 0 ]; then
 echo -e "${BOLD}║${NC}  Resume from:  ${YELLOW}session #$RESUME_FROM${NC}"
