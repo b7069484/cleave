@@ -40,6 +40,8 @@ CLEAVE_DIR="$CWD/.cleave"
 
 if [ -d "$CLEAVE_DIR" ]; then
   touch "$CLEAVE_DIR/.session_start" 2>/dev/null || true
+  # Clean handoff signal from previous session
+  rm -f "$CLEAVE_DIR/.handoff_signal" 2>/dev/null || true
 
   # Increment session counter
   COUNTER_FILE="$CLEAVE_DIR/.session_counter"

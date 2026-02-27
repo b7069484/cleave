@@ -33,6 +33,8 @@ CLEAVE_DIR="$CWD/.cleave"
 if [ -d "$CLEAVE_DIR" ]; then
   # Touch the root-level marker (for standard relays)
   touch "$CLEAVE_DIR/.session_start" 2>/dev/null || true
+  # Clean handoff signal from previous session
+  rm -f "$CLEAVE_DIR/.handoff_signal" 2>/dev/null || true
 
   # Also touch .session_start in any active pipeline stage directories
   # The pipeline loop creates these dirs before spawning sessions
@@ -40,6 +42,7 @@ if [ -d "$CLEAVE_DIR" ]; then
     for STAGE_DIR in "$CLEAVE_DIR/stages"/*/; do
       if [ -d "$STAGE_DIR" ] && [ -f "${STAGE_DIR}.active_relay" ]; then
         touch "${STAGE_DIR}.session_start" 2>/dev/null || true
+        rm -f "${STAGE_DIR}.handoff_signal" 2>/dev/null || true
       fi
     done
   fi

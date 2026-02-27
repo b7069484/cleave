@@ -102,28 +102,16 @@ Include ALL of the following:
 5. **What worked** — Techniques, search terms, API patterns that are proven
 6. **What to avoid** — Dead ends, broken approaches, things to skip
 7. **Knowledge reference** — Tell the next session: "Read `.cleave/KNOWLEDGE.md` for accumulated tips and patterns from prior sessions."
-8. **Handoff instructions** — Include this reminder at the end:
-
-```
-IMPORTANT: You are running inside an automated relay (cleave). When you estimate
-you've used ~60% of your context window, STOP productive work and execute the
-handoff procedure:
-1. Update .cleave/PROGRESS.md with status and exact stop point
-2. Update .cleave/KNOWLEDGE.md — promote durable insights to Core, append session notes
-3. Write .cleave/NEXT_PROMPT.md — complete prompt for the next session
-4. Print RELAY_HANDOFF_COMPLETE and stop immediately
-
-Complete all handoff writing before 70% context. Never exceed 70%.
-```
+8. **Do NOT copy relay/handoff instructions** into NEXT_PROMPT.md — they are appended automatically by the relay system. Instead, end with: "When at ~60% context, STOP and do the handoff procedure."
 
 ### Step 4 — Signal Completion
 
-After writing all three files, print exactly one of:
+Write a signal file and print confirmation:
 
-- **`RELAY_HANDOFF_COMPLETE`** — if handing off to next session (task still in progress)
-- **`TASK_FULLY_COMPLETE`** — if the entire task is done (STATUS is ALL_COMPLETE)
+- **Handoff:** Write `HANDOFF_COMPLETE` to `.cleave/.handoff_signal`, then print `RELAY_HANDOFF_COMPLETE`
+- **Task done:** Write `TASK_FULLY_COMPLETE` to `.cleave/.handoff_signal`, then print `TASK_FULLY_COMPLETE`
 
-Then **stop immediately**. Do not do any more work.
+Then **stop immediately**. The `.handoff_signal` file is what the relay system detects to start the next session. Do not do any more work.
 
 ## Subagent Strategy (Optional)
 
