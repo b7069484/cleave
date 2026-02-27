@@ -90,9 +90,20 @@ if [ ! -f "$ACTIVE_RELAY" ]; then
   fi
 fi
 
-# Check if task is fully complete (check for common completion markers)
-if [ -f "$PROGRESS" ] && grep -qi "ALL_COMPLETE\|TASK_FULLY_COMPLETE\|IMAGE_AUDIT_COMPLETE\|MAPPINGS_FIXED\|LOADER_FIXED\|VIDEOS_FIXED\|PREVIEWS_FIXED\|ALL_VERIFIED" "$PROGRESS" 2>/dev/null; then
+# Check if task is fully complete
+if [ -f "$PROGRESS" ] && grep -qi "ALL_COMPLETE\|TASK_FULLY_COMPLETE" "$PROGRESS" 2>/dev/null; then
   exit 0
+fi
+
+# Check for handoff signal file (written by Claude as final handoff step)
+HANDOFF_SIGNAL="$HANDOFF_DIR/.handoff_signal"
+if [ -f "$HANDOFF_SIGNAL" ]; then
+  # Verify it was written this session (not leftover from a previous one)
+  if [ -f "$SESSION_START" ] && [ "$HANDOFF_SIGNAL" -nt "$SESSION_START" ]; then
+    exit 0
+  elif [ ! -f "$SESSION_START" ]; then
+    exit 0
+  fi
 fi
 
 # Check that all three handoff files exist, are newer than session start, and are non-empty

@@ -24,7 +24,8 @@ function addSharedOptions(cmd: Command): Command {
     .option('--verify-timeout <seconds>', 'Timeout for verification command', String(DEFAULT_CONFIG.verifyTimeout))
     .option('--safe-mode', 'Require permission prompts', DEFAULT_CONFIG.safeMode)
     .option('-v, --verbose', 'Detailed logging', DEFAULT_CONFIG.verbose)
-    .option('--no-tui', 'Headless mode — use Agent SDK query() instead of TUI');
+    .option('--no-tui', 'Headless mode — use Agent SDK query() instead of TUI')
+    .option('--session-timeout <seconds>', 'Max seconds per session, 0=unlimited (default: 1800)', String(DEFAULT_CONFIG.sessionTimeout));
 }
 
 /**
@@ -44,6 +45,11 @@ function validateAndBuildConfig(opts: any, program: Command): Partial<CleaveConf
   const verifyTimeout = parseInt(opts.verifyTimeout || String(DEFAULT_CONFIG.verifyTimeout), 10);
   if (isNaN(verifyTimeout) || verifyTimeout < 1 || verifyTimeout > 600) {
     program.error('Error: --verify-timeout must be between 1 and 600');
+  }
+
+  const sessionTimeout = parseInt(opts.sessionTimeout || String(DEFAULT_CONFIG.sessionTimeout), 10);
+  if (isNaN(sessionTimeout) || sessionTimeout < 0 || sessionTimeout > 86400) {
+    program.error('Error: --session-timeout must be between 0 and 86400');
   }
 
   const workDir = path.resolve(opts.workDir);
@@ -67,6 +73,7 @@ function validateAndBuildConfig(opts: any, program: Command): Partial<CleaveConf
     knowledgeKeepSessions: DEFAULT_CONFIG.knowledgeKeepSessions,
     rateLimitMaxWait: DEFAULT_CONFIG.rateLimitMaxWait,
     tui: opts.tui ?? DEFAULT_CONFIG.tui,
+    sessionTimeout,
   };
 }
 

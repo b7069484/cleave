@@ -16,6 +16,7 @@ export interface RelayPaths {
   sessionStartMarker: string;
   activeRelayMarker: string;
   sessionCountFile: string;
+  handoffSignalFile: string;
 }
 
 export interface PipelineState {
@@ -40,6 +41,7 @@ export function resolvePaths(workDir: string): RelayPaths {
     sessionStartMarker: path.join(relayDir, '.session_start'),
     activeRelayMarker: path.join(relayDir, '.active_relay'),
     sessionCountFile: path.join(relayDir, '.session_count'),
+    handoffSignalFile: path.join(relayDir, '.handoff_signal'),
   };
 }
 
@@ -56,6 +58,7 @@ export function resolveStagePaths(workDir: string, stageName: string): RelayPath
     sessionStartMarker: path.join(stageDir, '.session_start'),
     activeRelayMarker: path.join(stageDir, '.active_relay'),
     sessionCountFile: path.join(stageDir, '.session_count'),
+    handoffSignalFile: path.join(stageDir, '.handoff_signal'),
   };
 }
 
@@ -148,6 +151,8 @@ export function initPipelineDir(workDir: string, stageNames: string[]): Pipeline
 export function touchSessionStart(paths: RelayPaths, sessionNum: number): void {
   fs.writeFileSync(paths.sessionStartMarker, new Date().toISOString());
   fs.writeFileSync(paths.sessionCountFile, String(sessionNum));
+  // Clear handoff signal from previous session so the poller starts fresh
+  try { if (fs.existsSync(paths.handoffSignalFile)) fs.unlinkSync(paths.handoffSignalFile); } catch { /* best effort */ }
 }
 
 /** Check if a file was modified after the session start marker. */
@@ -315,7 +320,7 @@ export function resetStageForRetry(stagePaths: RelayPaths): void {
 
 /** Clean up relay markers on exit. */
 export function cleanupRelay(paths: RelayPaths): void {
-  for (const f of [paths.activeRelayMarker, paths.sessionStartMarker]) {
+  for (const f of [paths.activeRelayMarker, paths.sessionStartMarker, paths.handoffSignalFile]) {
     try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* best effort */ }
   }
 }

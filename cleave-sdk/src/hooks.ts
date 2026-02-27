@@ -129,6 +129,12 @@ export function buildHooks(paths: RelayPaths, completionMarker: string) {
               return {};
             }
 
+            // Check for handoff signal file
+            if (fs.existsSync(paths.handoffSignalFile)) {
+              logger.debug('Stop hook: handoff signal file found, allowing exit');
+              return {};
+            }
+
             // Check if handoff files were written this session
             const { missing, stale } = checkHandoffFiles(paths);
 
@@ -151,7 +157,7 @@ export function buildHooks(paths: RelayPaths, completionMarker: string) {
             errorMsg += '1. Update .cleave/PROGRESS.md with current status and exact stop point\n';
             errorMsg += '2. Update .cleave/KNOWLEDGE.md — promote insights to Core, append session notes\n';
             errorMsg += '3. Write .cleave/NEXT_PROMPT.md — complete prompt for next session\n';
-            errorMsg += '4. Print RELAY_HANDOFF_COMPLETE or TASK_FULLY_COMPLETE\n';
+            errorMsg += '4. Write HANDOFF_COMPLETE to .cleave/.handoff_signal, then print RELAY_HANDOFF_COMPLETE\n';
             errorMsg += `\nIf ALL work is done, set STATUS: ${completionMarker} in PROGRESS.md.`;
 
             logger.debug('Stop hook: blocking exit — handoff incomplete');

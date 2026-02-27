@@ -53,6 +53,16 @@ if [ -f "$PROGRESS" ] && grep -qi "ALL_COMPLETE\|TASK_FULLY_COMPLETE" "$PROGRESS
   exit 0
 fi
 
+# Check for handoff signal file (written by Claude as final handoff step)
+HANDOFF_SIGNAL="$CLEAVE_DIR/.handoff_signal"
+if [ -f "$HANDOFF_SIGNAL" ]; then
+  if [ -f "$SESSION_START" ] && [ "$HANDOFF_SIGNAL" -nt "$SESSION_START" ]; then
+    exit 0
+  elif [ ! -f "$SESSION_START" ]; then
+    exit 0
+  fi
+fi
+
 # Check that all three handoff files exist and are newer than session start
 MISSING=""
 STALE=""

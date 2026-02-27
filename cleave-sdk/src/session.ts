@@ -42,57 +42,44 @@ function writePromptFile(relayDir: string, prompt: string): string {
 
 /**
  * Check if handoff files are complete and ready for relay.
- * Returns true if all three files exist, are fresh (written after session start),
- * and are non-empty. Also returns true if a completion marker is found.
+ *
+ * Detection strategy (in order):
+ * 1. Completion marker in PROGRESS.md — task is fully done
+ * 2. .handoff_signal file exists and is fresh — Claude wrote it as Step 4
+ *
+ * IMPORTANT: We do NOT infer handoff from file presence alone.
+ * KNOWLEDGE.md is initialized with boilerplate (always non-empty), so
+ * checking "all files present + fresh + non-empty" would SIGTERM Claude
+ * mid-session the moment it touches PROGRESS.md + NEXT_PROMPT.md.
+ * An explicit signal is required.
  */
 function isHandoffReady(paths: RelayPaths, completionMarker: string): boolean {
   try {
-    const progressFile = paths.progressFile;
-    const knowledgeFile = paths.knowledgeFile;
-    const nextPromptFile = paths.nextPromptFile;
-    const sessionStart = paths.sessionStartMarker;
-
-    // Check for completion marker first
-    if (fs.existsSync(progressFile)) {
-      const content = fs.readFileSync(progressFile, 'utf8').toLowerCase();
+    // 1. Check for completion marker (task fully done)
+    if (fs.existsSync(paths.progressFile)) {
+      const content = fs.readFileSync(paths.progressFile, 'utf8').toLowerCase();
       const marker = completionMarker.toLowerCase();
       if (content.includes(marker) || content.includes('task_fully_complete')) {
         return true;
       }
     }
 
-    // All three files must exist
-    if (!fs.existsSync(progressFile) || !fs.existsSync(knowledgeFile) || !fs.existsSync(nextPromptFile)) {
-      return false;
-    }
-
-    // All three must be non-empty
-    if (fs.statSync(progressFile).size === 0 ||
-        fs.statSync(knowledgeFile).size === 0 ||
-        fs.statSync(nextPromptFile).size === 0) {
-      return false;
-    }
-
-    // All three must be newer than session start (if marker exists)
-    if (fs.existsSync(sessionStart)) {
-      const startTime = fs.statSync(sessionStart).mtimeMs;
-      if (fs.statSync(progressFile).mtimeMs <= startTime) return false;
-      if (fs.statSync(knowledgeFile).mtimeMs <= startTime) return false;
-      if (fs.statSync(nextPromptFile).mtimeMs <= startTime) return false;
-    }
-
-    // Check for explicit handoff markers in progress file
-    const progressContent = fs.readFileSync(progressFile, 'utf8');
-    if (progressContent.includes('RELAY_HANDOFF_COMPLETE') ||
-        progressContent.includes('HANDOFF_COMPLETE')) {
+    // 2. Check for explicit handoff signal file
+    if (fs.existsSync(paths.handoffSignalFile)) {
+      // Verify it was written during THIS session (not leftover from a previous one)
+      if (fs.existsSync(paths.sessionStartMarker)) {
+        const startTime = fs.statSync(paths.sessionStartMarker).mtimeMs;
+        const signalTime = fs.statSync(paths.handoffSignalFile).mtimeMs;
+        if (signalTime > startTime) {
+          return true;
+        }
+        // Signal file is stale (from a prior session) — ignore it
+        return false;
+      }
+      // No session start marker — trust the signal file
       return true;
     }
 
-    // DO NOT return true just because all files are present/fresh/non-empty.
-    // KNOWLEDGE.md is initialized with boilerplate (always non-empty), so the
-    // moment Claude touches PROGRESS.md + NEXT_PROMPT.md during normal work,
-    // this would fire and SIGTERM the TUI mid-session. Only explicit handoff
-    // signals (completion marker or HANDOFF_COMPLETE) should trigger a kill.
     return false;
   } catch {
     return false;
@@ -143,6 +130,7 @@ async function runTuiSession(
   // Track whether we intentionally killed the TUI
   let killedByRelay = false;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   try {
     // Strip CLAUDECODE env var so the child claude process doesn't
@@ -167,20 +155,33 @@ async function runTuiSession(
     const POLL_DELAY_MS = 30_000;    // Wait 30s before first check
     const POLL_INTERVAL_MS = 5_000;  // Then check every 5s
 
+    let lastNextPromptSize = -1;  // Track NEXT_PROMPT.md size for stability check
+
     const startPolling = () => {
       pollTimer = setInterval(() => {
         if (isHandoffReady(paths, config.completionMarker)) {
-          logger.debug(`Handoff files detected — terminating TUI session #${sessionNum}`);
-          killedByRelay = true;
-          if (pollTimer) clearInterval(pollTimer);
-          pollTimer = null;
+          // Stability check: ensure NEXT_PROMPT.md size is stable between polls
+          // (protects against SIGTERMing while Claude is mid-write)
+          const currentSize = fs.existsSync(paths.nextPromptFile)
+            ? fs.statSync(paths.nextPromptFile).size : 0;
 
-          // Give Claude a moment to finish writing, then kill
-          setTimeout(() => {
-            try {
-              child.kill('SIGTERM');
-            } catch { /* process may have already exited */ }
-          }, 2_000);
+          if (currentSize === lastNextPromptSize && lastNextPromptSize >= 0) {
+            // Files stable for 2 consecutive polls — safe to kill
+            logger.debug(`Handoff detected + files stable — terminating TUI session #${sessionNum}`);
+            killedByRelay = true;
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+            // Grace period: 2 seconds for any final I/O
+            setTimeout(() => {
+              try { child.kill('SIGTERM'); } catch { /* already exited */ }
+            }, 2_000);
+          } else {
+            // First detection or files still changing — wait for next poll
+            lastNextPromptSize = currentSize;
+            logger.debug(`Handoff detected but files may still be writing (${currentSize} bytes) — waiting for stability`);
+          }
+        } else {
+          lastNextPromptSize = -1;  // Reset if handoff not ready
         }
       }, POLL_INTERVAL_MS);
     };
@@ -188,16 +189,32 @@ async function runTuiSession(
     // Delay the start of polling
     const delayTimer = setTimeout(startPolling, POLL_DELAY_MS);
 
+    // ── Session timeout ──
+    // If the session runs longer than sessionTimeout, force-kill it.
+    // Prevents infinite hangs if Claude never triggers a handoff.
+    if (config.sessionTimeout > 0) {
+      timeoutTimer = setTimeout(() => {
+        if (!killedByRelay) {
+          logger.warn(`Session #${sessionNum} exceeded timeout (${config.sessionTimeout}s) — forcing SIGTERM`);
+          killedByRelay = true;
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          try { child.kill('SIGTERM'); } catch { /* already exited */ }
+        }
+      }, config.sessionTimeout * 1000);
+    }
+
     result.exitCode = await new Promise<number>((resolve, reject) => {
       child.on('exit', (code) => {
         clearTimeout(delayTimer);
         if (pollTimer) clearInterval(pollTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         // If we killed it intentionally, treat as success (exit 0)
         resolve(killedByRelay ? 0 : (code ?? 1));
       });
       child.on('error', (err) => {
         clearTimeout(delayTimer);
         if (pollTimer) clearInterval(pollTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         logger.error(`Failed to spawn claude: ${err.message}`);
         reject(err);
       });
@@ -207,6 +224,7 @@ async function runTuiSession(
     logger.error(`TUI session error: ${err.message}`);
   } finally {
     if (pollTimer) clearInterval(pollTimer);
+    if (timeoutTimer) clearTimeout(timeoutTimer);
   }
 
   // Detect rate limiting from exit patterns
