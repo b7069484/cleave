@@ -370,14 +370,16 @@ The EXACT prompt for the next session (fed verbatim). Include:
 - Setup steps (venv, env vars, etc.)
 - Exactly where to resume
 - Reference KNOWLEDGE.md: tell next session to read it
-- These same handoff instructions
+- Do NOT copy these relay instructions into NEXT_PROMPT.md — they are appended automatically
 - End with: "When at ~${HANDOFF_THRESHOLD}% context, STOP and do the handoff procedure."
 
-**STEP 4 — Print exactly:** \`RELAY_HANDOFF_COMPLETE\`
-Then stop immediately.
+**STEP 4 — Signal completion:**
+Write the text \`HANDOFF_COMPLETE\` to \`.cleave/.handoff_signal\` (create or overwrite it).
+Then print \`RELAY_HANDOFF_COMPLETE\` to confirm, and stop immediately.
 
-If ALL work is done, write \`STATUS: $COMPLETION_MARKER\` in PROGRESS.md
-and print \`TASK_FULLY_COMPLETE\` instead.
+If ALL work is done, write \`STATUS: $COMPLETION_MARKER\` in PROGRESS.md,
+write \`TASK_FULLY_COMPLETE\` to \`.cleave/.handoff_signal\`,
+and print \`TASK_FULLY_COMPLETE\` to confirm.
 HANDOFF
 }
 
@@ -390,6 +392,10 @@ log_msg() {
 
 is_complete() {
     [ -f "$PROGRESS_FILE" ] && head -10 "$PROGRESS_FILE" | grep -qi "$COMPLETION_MARKER"
+}
+
+has_handoff_signal() {
+    [ -f "$RELAY_DIR/.handoff_signal" ]
 }
 
 check_and_exit_if_complete() {
@@ -538,7 +544,7 @@ git_commit_session() {
 
     if [ -d "$WORK_DIR/.git" ]; then
         cd "$WORK_DIR" || return
-        if ! git add -A 2>&1; then
+        if ! git add .cleave/ -A 2>&1 && ! git add -u 2>&1; then
             log_msg "${YELLOW}  Git: failed to stage changes for session #${session_num}${NC}"
             return
         fi
@@ -621,8 +627,10 @@ build_session_prompt() {
         echo "Read \`.cleave/KNOWLEDGE.md\` for tips and patterns from prior sessions." >> "$prompt_file"
     fi
 
-    # Always append handoff instructions
-    build_handoff_instructions >> "$prompt_file"
+    # Append handoff instructions (skip if already present from NEXT_PROMPT.md)
+    if ! grep -q "AUTOMATED SESSION RELAY" "$prompt_file" 2>/dev/null; then
+        build_handoff_instructions >> "$prompt_file"
+    fi
 
     echo "$prompt_file"
 }
@@ -700,6 +708,9 @@ while [ $SESSION_COUNT -lt $MAX_SESSIONS ]; do
 
     # Archive prompt
     cp "$PROMPT_FILE" "$LOG_DIR/session_${SESSION_COUNT}_prompt.md" 2>/dev/null
+
+    # ── Clean handoff signal from previous session ──
+    rm -f "$RELAY_DIR/.handoff_signal" 2>/dev/null
 
     # ── Launch Claude Code ──
     cd "$WORK_DIR" || { log_msg "${RED}Cannot cd to $WORK_DIR${NC}"; exit 1; }
