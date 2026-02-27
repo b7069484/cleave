@@ -47,6 +47,7 @@ function safeCopyScript(scriptPath: string): string {
   if (!fs.existsSync(safePath) ||
       fs.statSync(scriptPath).mtimeMs > fs.statSync(safePath).mtimeMs) {
     fs.mkdirSync(safeDir, { recursive: true });
+    fs.chmodSync(safeDir, 0o700);
     fs.copyFileSync(scriptPath, safePath);
     fs.chmodSync(safePath, 0o755);
   }
