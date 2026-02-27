@@ -391,8 +391,8 @@ log_msg() {
 }
 
 is_complete() {
-    # Only match STATUS lines — avoid false positives from marker in descriptions
-    [ -f "$PROGRESS_FILE" ] && grep -qiP "STATUS[: *]+\s*$COMPLETION_MARKER" "$PROGRESS_FILE" 2>/dev/null
+    # STATUS must be at start of line — rejects "3. Mark STATUS: ALL_COMPLETE" in descriptions
+    [ -f "$PROGRESS_FILE" ] && grep -qiP "^\s*[#*]*\s*STATUS[: *]+\s*$COMPLETION_MARKER" "$PROGRESS_FILE" 2>/dev/null
 }
 
 has_handoff_signal() {

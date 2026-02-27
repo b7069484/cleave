@@ -55,12 +55,15 @@ function writePromptFile(relayDir: string, prompt: string): string {
  */
 function isHandoffReady(paths: RelayPaths, completionMarker: string): boolean {
   try {
-    // 1. Check for completion marker on a STATUS line (avoids false positives
-    // from marker appearing in descriptions like "next session should mark ALL_COMPLETE")
+    // 1. Check for completion marker on a STATUS line at start of line
+    // (avoids false positives like "3. Mark STATUS: ALL_COMPLETE" in descriptions)
     if (fs.existsSync(paths.progressFile)) {
       const content = fs.readFileSync(paths.progressFile, 'utf8');
       const markerEscaped = completionMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const statusPattern = new RegExp(`STATUS[:\\s*]+\\s*(?:${markerEscaped}|TASK_FULLY_COMPLETE)`, 'i');
+      const statusPattern = new RegExp(
+        `^[\\s#*]*STATUS[:\\s*]+\\s*(?:${markerEscaped}|TASK_FULLY_COMPLETE)`,
+        'im'
+      );
       if (statusPattern.test(content)) {
         return true;
       }
@@ -170,9 +173,12 @@ async function runTuiSession(
           const currentSize = nextPromptExists ? fs.statSync(paths.nextPromptFile).size : 0;
 
           // For completion (ALL_COMPLETE), NEXT_PROMPT.md isn't needed
-          // Use strict STATUS-line matching to avoid false positives
+          // Require STATUS at start of line to avoid false positives
           const markerEsc = config.completionMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const completionRe = new RegExp(`STATUS[:\\s*]+\\s*(?:${markerEsc}|TASK_FULLY_COMPLETE)`, 'i');
+          const completionRe = new RegExp(
+            `^[\\s#*]*STATUS[:\\s*]+\\s*(?:${markerEsc}|TASK_FULLY_COMPLETE)`,
+            'im'
+          );
           const isCompletion = fs.existsSync(paths.progressFile) &&
             completionRe.test(fs.readFileSync(paths.progressFile, 'utf8'));
 

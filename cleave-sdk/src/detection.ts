@@ -12,21 +12,22 @@ import { logger } from './utils/logger';
 
 /**
  * Check if the task is complete by looking for the marker in PROGRESS.md.
- * Only matches STATUS lines — avoids false positives from marker appearing
- * in descriptions (e.g., "next session should mark ALL_COMPLETE").
+ * Only matches STATUS at the start of a line (with optional markdown formatting
+ * like ## or **), avoiding false positives from the marker appearing in
+ * descriptions (e.g., "3. Mark STATUS: ALL_COMPLETE").
  */
 export function isComplete(progressPath: string, marker: string): boolean {
   try {
     if (!fs.existsSync(progressPath)) return false;
     const content = fs.readFileSync(progressPath, 'utf8');
-    const markerLower = marker.toLowerCase();
-    // Match "STATUS:" followed by the marker (with flexible whitespace/formatting)
-    // Handles: "STATUS: ALL_COMPLETE", "**STATUS:** ALL_COMPLETE", "STATUS:ALL_COMPLETE"
-    const statusPattern = new RegExp(`status[:\\s*]+\\s*${markerLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i');
-    if (statusPattern.test(content)) return true;
-    // Also check for TASK_FULLY_COMPLETE as STATUS value
-    if (/status[:\s*]+\s*task_fully_complete/i.test(content)) return true;
-    return false;
+    const markerEsc = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // ^ anchors to line start (multiline). Allow optional markdown: ##, **, whitespace
+    // Must NOT have letters/digits before STATUS (rejects "3. Mark STATUS:")
+    const statusPattern = new RegExp(
+      `^[\\s#*]*STATUS[:\\s*]+\\s*(?:${markerEsc}|TASK_FULLY_COMPLETE)`,
+      'im'
+    );
+    return statusPattern.test(content);
   } catch {
     return false; // Can't read → not complete
   }

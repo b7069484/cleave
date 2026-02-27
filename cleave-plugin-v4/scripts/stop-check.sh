@@ -48,8 +48,8 @@ if [ ! -f "$ACTIVE_RELAY" ]; then
   exit 0
 fi
 
-# Check if task is fully complete (match STATUS lines only to avoid false positives)
-if [ -f "$PROGRESS" ] && grep -qiE "STATUS[: *]+\s*(ALL_COMPLETE|TASK_FULLY_COMPLETE)" "$PROGRESS" 2>/dev/null; then
+# Check if task is fully complete (STATUS must be at start of line, not in descriptions)
+if [ -f "$PROGRESS" ] && grep -qiP "^\s*[#*]*\s*STATUS[: *]+\s*(ALL_COMPLETE|TASK_FULLY_COMPLETE)" "$PROGRESS" 2>/dev/null; then
   exit 0
 fi
 
