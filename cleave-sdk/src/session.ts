@@ -130,6 +130,7 @@ async function runTuiSession(
   // Track whether we intentionally killed the TUI
   let killedByRelay = false;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   try {
     // Strip CLAUDECODE env var so the child claude process doesn't
@@ -154,20 +155,33 @@ async function runTuiSession(
     const POLL_DELAY_MS = 30_000;    // Wait 30s before first check
     const POLL_INTERVAL_MS = 5_000;  // Then check every 5s
 
+    let lastNextPromptSize = -1;  // Track NEXT_PROMPT.md size for stability check
+
     const startPolling = () => {
       pollTimer = setInterval(() => {
         if (isHandoffReady(paths, config.completionMarker)) {
-          logger.debug(`Handoff files detected — terminating TUI session #${sessionNum}`);
-          killedByRelay = true;
-          if (pollTimer) clearInterval(pollTimer);
-          pollTimer = null;
+          // Stability check: ensure NEXT_PROMPT.md size is stable between polls
+          // (protects against SIGTERMing while Claude is mid-write)
+          const currentSize = fs.existsSync(paths.nextPromptFile)
+            ? fs.statSync(paths.nextPromptFile).size : 0;
 
-          // Give Claude a moment to finish writing, then kill
-          setTimeout(() => {
-            try {
-              child.kill('SIGTERM');
-            } catch { /* process may have already exited */ }
-          }, 2_000);
+          if (currentSize === lastNextPromptSize && lastNextPromptSize >= 0) {
+            // Files stable for 2 consecutive polls — safe to kill
+            logger.debug(`Handoff detected + files stable — terminating TUI session #${sessionNum}`);
+            killedByRelay = true;
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+            // Grace period: 2 seconds for any final I/O
+            setTimeout(() => {
+              try { child.kill('SIGTERM'); } catch { /* already exited */ }
+            }, 2_000);
+          } else {
+            // First detection or files still changing — wait for next poll
+            lastNextPromptSize = currentSize;
+            logger.debug(`Handoff detected but files may still be writing (${currentSize} bytes) — waiting for stability`);
+          }
+        } else {
+          lastNextPromptSize = -1;  // Reset if handoff not ready
         }
       }, POLL_INTERVAL_MS);
     };
@@ -175,16 +189,32 @@ async function runTuiSession(
     // Delay the start of polling
     const delayTimer = setTimeout(startPolling, POLL_DELAY_MS);
 
+    // ── Session timeout ──
+    // If the session runs longer than sessionTimeout, force-kill it.
+    // Prevents infinite hangs if Claude never triggers a handoff.
+    if (config.sessionTimeout > 0) {
+      timeoutTimer = setTimeout(() => {
+        if (!killedByRelay) {
+          logger.warn(`Session #${sessionNum} exceeded timeout (${config.sessionTimeout}s) — forcing SIGTERM`);
+          killedByRelay = true;
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          try { child.kill('SIGTERM'); } catch { /* already exited */ }
+        }
+      }, config.sessionTimeout * 1000);
+    }
+
     result.exitCode = await new Promise<number>((resolve, reject) => {
       child.on('exit', (code) => {
         clearTimeout(delayTimer);
         if (pollTimer) clearInterval(pollTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         // If we killed it intentionally, treat as success (exit 0)
         resolve(killedByRelay ? 0 : (code ?? 1));
       });
       child.on('error', (err) => {
         clearTimeout(delayTimer);
         if (pollTimer) clearInterval(pollTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         logger.error(`Failed to spawn claude: ${err.message}`);
         reject(err);
       });
@@ -194,6 +224,7 @@ async function runTuiSession(
     logger.error(`TUI session error: ${err.message}`);
   } finally {
     if (pollTimer) clearInterval(pollTimer);
+    if (timeoutTimer) clearTimeout(timeoutTimer);
   }
 
   // Detect rate limiting from exit patterns

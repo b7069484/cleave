@@ -88,6 +88,9 @@ export interface CleaveConfig {
   /** Pipeline configuration (null if not a pipeline) */
   pipelineConfig: PipelineConfig | null;
 
+  /** Maximum seconds for a single session before forced SIGTERM (0 = no limit) */
+  sessionTimeout: number;
+
   /** Resume pipeline from this stage */
   resumeStage: string | null;
 
@@ -112,6 +115,7 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   knowledgeKeepSessions: 5,
   rateLimitMaxWait: 18000,
   tui: true,
+  sessionTimeout: 1800,   // 30 minutes
   isContinuation: false,
   continuePrompt: null,
   isPipeline: false,
@@ -146,5 +150,8 @@ export function validateConfig(config: CleaveConfig): void {
   }
   if (config.resumeFrom >= config.maxSessions) {
     throw new Error(`resumeFrom (${config.resumeFrom}) must be less than maxSessions (${config.maxSessions})`);
+  }
+  if (config.sessionTimeout < 0 || config.sessionTimeout > 86400) {
+    throw new Error('sessionTimeout must be between 0 and 86400 (24 hours)');
   }
 }
