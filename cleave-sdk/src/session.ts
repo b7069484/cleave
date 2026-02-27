@@ -55,11 +55,13 @@ function writePromptFile(relayDir: string, prompt: string): string {
  */
 function isHandoffReady(paths: RelayPaths, completionMarker: string): boolean {
   try {
-    // 1. Check for completion marker (task fully done)
+    // 1. Check for completion marker on a STATUS line (avoids false positives
+    // from marker appearing in descriptions like "next session should mark ALL_COMPLETE")
     if (fs.existsSync(paths.progressFile)) {
-      const content = fs.readFileSync(paths.progressFile, 'utf8').toLowerCase();
-      const marker = completionMarker.toLowerCase();
-      if (content.includes(marker) || content.includes('task_fully_complete')) {
+      const content = fs.readFileSync(paths.progressFile, 'utf8');
+      const markerEscaped = completionMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const statusPattern = new RegExp(`STATUS[:\\s*]+\\s*(?:${markerEscaped}|TASK_FULLY_COMPLETE)`, 'i');
+      if (statusPattern.test(content)) {
         return true;
       }
     }
@@ -160,18 +162,39 @@ async function runTuiSession(
     const startPolling = () => {
       pollTimer = setInterval(() => {
         if (isHandoffReady(paths, config.completionMarker)) {
-          // Stability check: ensure NEXT_PROMPT.md size is stable between polls
-          // (protects against SIGTERMing while Claude is mid-write)
-          const currentSize = fs.existsSync(paths.nextPromptFile)
-            ? fs.statSync(paths.nextPromptFile).size : 0;
+          // Stability check: NEXT_PROMPT.md must exist, be non-empty, and
+          // have a stable size across 2 consecutive polls.
+          // Without this, a non-existent file (size 0) would appear "stable"
+          // and trigger premature SIGTERM before Claude writes it.
+          const nextPromptExists = fs.existsSync(paths.nextPromptFile);
+          const currentSize = nextPromptExists ? fs.statSync(paths.nextPromptFile).size : 0;
 
-          if (currentSize === lastNextPromptSize && lastNextPromptSize >= 0) {
+          // For completion (ALL_COMPLETE), NEXT_PROMPT.md isn't needed
+          // Use strict STATUS-line matching to avoid false positives
+          const markerEsc = config.completionMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const completionRe = new RegExp(`STATUS[:\\s*]+\\s*(?:${markerEsc}|TASK_FULLY_COMPLETE)`, 'i');
+          const isCompletion = fs.existsSync(paths.progressFile) &&
+            completionRe.test(fs.readFileSync(paths.progressFile, 'utf8'));
+
+          if (!nextPromptExists && !isCompletion) {
+            // Signal file written but NEXT_PROMPT.md not yet — keep waiting
+            logger.debug(`Handoff signal detected but NEXT_PROMPT.md missing — waiting for Claude to write it`);
+            lastNextPromptSize = -1;
+          } else if (currentSize > 0 && currentSize === lastNextPromptSize && lastNextPromptSize > 0) {
             // Files stable for 2 consecutive polls — safe to kill
-            logger.debug(`Handoff detected + files stable — terminating TUI session #${sessionNum}`);
+            logger.debug(`Handoff detected + files stable (${currentSize} bytes) — terminating TUI session #${sessionNum}`);
             killedByRelay = true;
             if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 
             // Grace period: 2 seconds for any final I/O
+            setTimeout(() => {
+              try { child.kill('SIGTERM'); } catch { /* already exited */ }
+            }, 2_000);
+          } else if (isCompletion && lastNextPromptSize === currentSize) {
+            // Task complete (ALL_COMPLETE) — don't need NEXT_PROMPT.md
+            logger.debug(`Task completion detected — terminating TUI session #${sessionNum}`);
+            killedByRelay = true;
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
             setTimeout(() => {
               try { child.kill('SIGTERM'); } catch { /* already exited */ }
             }, 2_000);
