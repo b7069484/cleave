@@ -124,7 +124,9 @@ export async function runRelayCore(opts: RelayCoreOptions): Promise<RelayCoreRes
     try {
       prompt = opts.buildPrompt
         ? opts.buildPrompt(config, sessionCount)
-        : config.tui ? buildTaskPrompt(config, sessionCount) : buildSessionPrompt(config, sessionCount);
+        : (config.sessionMode === 'headless')
+          ? buildSessionPrompt(config, sessionCount)
+          : buildTaskPrompt(config, sessionCount);
     } catch (err: any) {
       logger.error(`${label}Prompt build failed for session #${sessionCount}: ${err.message}`);
       consecutiveCrashes++;
@@ -251,7 +253,7 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
 
   logger.init(paths.relayDir, config.verbose);
   logger.banner(config);
-  logger.info(`cleave started (${config.tui ? 'TUI' : 'headless'} mode)`);
+  logger.info(`cleave started (${config.sessionMode} mode)`);
   logger.debug(`Work dir: ${config.workDir}`);
 
   // Acquire file lock

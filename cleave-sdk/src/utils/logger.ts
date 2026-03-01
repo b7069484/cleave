@@ -75,15 +75,21 @@ export class Logger {
     console.log('');
   }
 
-  banner(config: { workDir: string; maxSessions: number; gitCommit: boolean; verifyCommand: string | null; resumeFrom: number; notify: boolean }) {
+  banner(config: { workDir: string; maxSessions: number; gitCommit: boolean; verifyCommand: string | null; resumeFrom: number; notify: boolean; sessionMode?: string; model?: string | null }) {
     const C = COLORS;
+    const mode = config.sessionMode || 'print';
+    const modeLabel = mode === 'print' ? 'print (auto-relay)' : mode === 'tui' ? 'TUI (interactive)' : 'headless (Agent SDK)';
     console.log('');
     console.log(`${C.bold}╔══════════════════════════════════════════════════════════╗${C.reset}`);
-    console.log(`${C.bold}║  ${C.cyan}cleave${C.reset} ${C.dim}v${VERSION} (Agent SDK edition)${C.reset}${C.bold}                 ║${C.reset}`);
+    console.log(`${C.bold}║  ${C.cyan}cleave${C.reset} ${C.dim}v${VERSION}${C.reset}${C.bold}                                           ║${C.reset}`);
     console.log(`${C.bold}║  ${C.dim}Infinite context for Claude Code${C.reset}${C.bold}                        ║${C.reset}`);
     console.log(`${C.bold}╠══════════════════════════════════════════════════════════╣${C.reset}`);
     console.log(`${C.bold}║${C.reset}  Work dir:    ${C.blue}${path.basename(config.workDir)}${C.reset}`);
     console.log(`${C.bold}║${C.reset}  Max sessions:${C.blue} ${config.maxSessions}${C.reset}`);
+    console.log(`${C.bold}║${C.reset}  Mode:        ${C.green} ${modeLabel}${C.reset}`);
+    if (config.model) {
+      console.log(`${C.bold}║${C.reset}  Model:       ${C.blue} ${config.model}${C.reset}`);
+    }
     console.log(`${C.bold}║${C.reset}  Git commit:  ${C.blue} ${config.gitCommit}${C.reset}`);
     if (config.verifyCommand) {
       console.log(`${C.bold}║${C.reset}  Verify cmd:  ${C.blue} ${config.verifyCommand}${C.reset}`);
@@ -91,7 +97,6 @@ export class Logger {
     if (config.resumeFrom > 0) {
       console.log(`${C.bold}║${C.reset}  Resume from: ${C.yellow} session #${config.resumeFrom}${C.reset}`);
     }
-    console.log(`${C.bold}║${C.reset}  Engine:      ${C.green} Agent SDK ✓${C.reset}`);
     console.log(`${C.bold}╚══════════════════════════════════════════════════════════╝${C.reset}`);
     console.log('');
   }

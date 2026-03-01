@@ -1,12 +1,17 @@
 /**
- * Session runner — two modes:
+ * Session runner — three modes:
  *
- * TUI mode (default): Spawns `claude` as a child process with full TUI.
+ * Print mode (default, v5.4+): Spawns `claude -p --output-format stream-json`.
+ *   Most reliable for auto-relay: Claude processes the prompt, uses tools,
+ *   writes handoff files, and exits naturally. No file polling needed.
+ *   Stream-json output gives real-time visibility into Claude's work.
+ *
+ * TUI mode: Spawns `claude` as a child process with full TUI.
  *   A background file poller watches for handoff completion and sends
  *   SIGTERM to the TUI when done, so the relay loop can start the next
  *   session. Without this, the TUI idles at `❯` forever and blocks chaining.
  *
- * Headless mode (--no-tui): Uses the Agent SDK query() function for
+ * Headless mode: Uses the Agent SDK query() function for
  *   programmatic control. No TUI — text streams to stdout.
  */
 
@@ -18,12 +23,15 @@ import { RelayPaths } from './state/files';
 import { buildHooks, generateSettingsFile } from './hooks';
 import { buildHandoffInstructions } from './utils/prompt-builder';
 import { logger } from './utils/logger';
+import { createInterface } from 'readline';
 
 export interface SessionResult {
   exitCode: number;
   rateLimited: boolean;
   rateLimitResetAt: number | null;
   resultText: string;
+  /** Rough estimate of output tokens (character count / 4) */
+  estimatedOutputTokens: number;
 }
 
 /** Rate limit detection patterns — comprehensive list. */
@@ -111,6 +119,7 @@ async function runTuiSession(
     rateLimited: false,
     rateLimitResetAt: null,
     resultText: '',
+    estimatedOutputTokens: 0,
   };
 
   const settingsPath = generateSettingsFile(paths.relayDir);
@@ -303,6 +312,7 @@ async function runHeadlessSession(
     rateLimited: false,
     rateLimitResetAt: null,
     resultText: '',
+    estimatedOutputTokens: 0,
   };
 
   const allowedTools = [
@@ -360,7 +370,253 @@ async function runHeadlessSession(
 }
 
 /**
- * Run a single Claude session. Dispatches to TUI or headless based on config.
+ * Run a session in print mode — spawns `claude -p --output-format stream-json`.
+ *
+ * This is the most reliable mode for automated relay:
+ * - Claude processes the prompt, uses tools, writes handoff files
+ * - Claude exits naturally when done (no SIGTERM needed)
+ * - Stream-json output gives real-time monitoring
+ * - No Agent SDK dependency required
+ * - Permission bypass works without interactive approval
+ */
+async function runPrintSession(
+  taskPrompt: string,
+  config: CleaveConfig,
+  paths: RelayPaths,
+  sessionNum: number
+): Promise<SessionResult> {
+  const result: SessionResult = {
+    exitCode: 0,
+    rateLimited: false,
+    rateLimitResetAt: null,
+    resultText: '',
+    estimatedOutputTokens: 0,
+  };
+
+  const handoffInstructions = buildHandoffInstructions(config);
+
+  const args: string[] = [
+    '-p',
+    '--output-format', 'stream-json',
+    '--verbose',   // required for stream-json output
+    '--append-system-prompt', handoffInstructions,
+  ];
+
+  // Permission mode
+  if (!config.safeMode) {
+    args.push('--dangerously-skip-permissions');
+  } else {
+    args.push('--permission-mode', 'acceptEdits');
+  }
+
+  // Model selection
+  if (config.model) {
+    args.push('--model', config.model);
+  }
+
+  logger.debug(`Launching print session #${sessionNum}`);
+  logger.debug(`  Mode: print (claude -p --output-format stream-json)`);
+
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  let killed = false;
+
+  try {
+    // Strip CLAUDECODE env var so the child doesn't think it's nested
+    const childEnv = { ...process.env };
+    delete childEnv.CLAUDECODE;
+
+    const child = spawn('claude', args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: config.workDir,
+      env: {
+        ...childEnv,
+        CLEAVE_SESSION: String(sessionNum),
+        CLEAVE_WORK_DIR: config.workDir,
+        ...(config.activeStage ? { CLEAVE_ACTIVE_STAGE: config.activeStage } : {}),
+      },
+    });
+
+    // Pipe the full task prompt via stdin
+    child.stdin.write(taskPrompt);
+    child.stdin.end();
+
+    // Session timeout — force-kill if it runs too long
+    if (config.sessionTimeout > 0) {
+      timeoutTimer = setTimeout(() => {
+        if (!killed) {
+          logger.warn(`Session #${sessionNum} exceeded timeout (${config.sessionTimeout}s) — forcing exit`);
+          killed = true;
+          try { child.kill('SIGTERM'); } catch { /* already exited */ }
+        }
+      }, config.sessionTimeout * 1000);
+    }
+
+    // ── Parse stream-json output ──
+    let toolUseCount = 0;
+    let lastToolName = '';
+    let lastAssistantText = '';
+    let totalOutputChars = 0;
+    let stderrOutput = '';
+
+    // Read stderr for error messages
+    if (child.stderr) {
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderrOutput += chunk.toString();
+      });
+    }
+
+    // Parse stdout line by line (stream-json is newline-delimited JSON)
+    const rl = createInterface({ input: child.stdout });
+
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+
+      let event: any;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        // Not JSON — raw text output, append to result
+        result.resultText += line + '\n';
+        totalOutputChars += line.length;
+        continue;
+      }
+
+      // Process different event types
+      if (event.type === 'assistant') {
+        // Assistant message with content blocks
+        const content = event.message?.content || [];
+        for (const block of content) {
+          if (block.type === 'text') {
+            result.resultText += block.text;
+            totalOutputChars += block.text.length;
+            lastAssistantText = block.text;
+
+            // Log interesting output (handoff signals, completion, errors)
+            if (block.text.includes('RELAY_HANDOFF_COMPLETE')) {
+              logger.success(`Session #${sessionNum}: handoff signal detected in output`);
+            }
+            if (block.text.includes('TASK_FULLY_COMPLETE')) {
+              logger.success(`Session #${sessionNum}: task completion signal detected`);
+            }
+          } else if (block.type === 'tool_use') {
+            toolUseCount++;
+            lastToolName = block.name || 'unknown';
+            if (config.verbose) {
+              logger.debug(`  Tool: ${lastToolName}`);
+            }
+          }
+        }
+      } else if (event.type === 'content_block_start') {
+        // Streaming content block start
+        if (event.content_block?.type === 'tool_use') {
+          toolUseCount++;
+          lastToolName = event.content_block.name || 'unknown';
+          if (config.verbose) {
+            logger.debug(`  Tool: ${lastToolName}`);
+          }
+        }
+      } else if (event.type === 'content_block_delta') {
+        // Streaming text delta
+        if (event.delta?.type === 'text_delta' && event.delta?.text) {
+          result.resultText += event.delta.text;
+          totalOutputChars += event.delta.text.length;
+        }
+      } else if (event.type === 'result') {
+        // Final result
+        if (event.result) {
+          result.resultText += typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
+        }
+        // Check for cost/usage info
+        if (event.cost_usd !== undefined) {
+          logger.debug(`  Session cost: $${event.cost_usd.toFixed(4)}`);
+        }
+        if (event.total_cost_usd !== undefined) {
+          logger.debug(`  Total cost: $${event.total_cost_usd.toFixed(4)}`);
+        }
+      } else if (event.type === 'rate_limit_event') {
+        // Rate limit status from Claude Code (may include overageStatus)
+        const info = event.rate_limit_info;
+        if (info?.status === 'blocked' || info?.overageStatus === 'blocked') {
+          result.rateLimited = true;
+          result.rateLimitResetAt = info?.resetsAt
+            ? info.resetsAt * 1000
+            : Date.now() + 300_000;
+          logger.warn(`Rate limit blocked. Resets at: ${new Date(result.rateLimitResetAt).toISOString()}`);
+        } else if (config.verbose && info) {
+          logger.debug(`  Rate limit: ${info.status} (resets: ${new Date((info.resetsAt || 0) * 1000).toLocaleTimeString()})`);
+        }
+      } else if (event.type === 'error') {
+        const errMsg = event.error?.message || JSON.stringify(event.error) || 'Unknown error';
+        logger.error(`Session #${sessionNum} stream error: ${errMsg}`);
+        if (RATE_LIMIT_PATTERNS.test(errMsg)) {
+          result.rateLimited = true;
+          result.rateLimitResetAt = Date.now() + 300_000;
+        }
+      } else if (event.type === 'system') {
+        // System messages (hooks, tool execution, etc.)
+        if (config.verbose) {
+          const subtype = event.subtype || '';
+          if (subtype === 'hook_response' && event.exit_code !== 0) {
+            logger.debug(`  Hook error (${event.hook_name}): exit ${event.exit_code}`);
+          }
+        }
+      }
+    }
+
+    // Wait for process exit
+    result.exitCode = await new Promise<number>((resolve) => {
+      child.on('exit', (code) => {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        resolve(killed ? 0 : (code ?? 1));
+      });
+      child.on('error', (err) => {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        logger.error(`Failed to spawn claude: ${err.message}`);
+        resolve(1);
+      });
+    });
+
+    result.estimatedOutputTokens = Math.round(totalOutputChars / 4);
+
+    // Log session summary
+    logger.debug(`Session #${sessionNum} print mode summary:`);
+    logger.debug(`  Tool calls: ${toolUseCount}`);
+    logger.debug(`  Output chars: ${totalOutputChars}`);
+    logger.debug(`  Est. output tokens: ${result.estimatedOutputTokens}`);
+    if (lastToolName) logger.debug(`  Last tool: ${lastToolName}`);
+
+    // Check stderr for rate limit signals
+    if (stderrOutput && RATE_LIMIT_PATTERNS.test(stderrOutput)) {
+      result.rateLimited = true;
+      result.rateLimitResetAt = Date.now() + 300_000;
+      logger.warn('Rate limit detected from stderr output');
+    }
+
+  } catch (err: any) {
+    result.exitCode = 1;
+    logger.error(`Print session error: ${err.message}`);
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+  }
+
+  // Detect rate limiting from exit code + no handoff
+  if (result.exitCode !== 0 && !killed && !result.rateLimited) {
+    const progressFresh = fs.existsSync(paths.progressFile) &&
+      fs.existsSync(paths.sessionStartMarker) &&
+      fs.statSync(paths.progressFile).mtimeMs > fs.statSync(paths.sessionStartMarker).mtimeMs;
+
+    if (!progressFresh && RATE_LIMIT_PATTERNS.test(result.resultText)) {
+      result.rateLimited = true;
+      result.rateLimitResetAt = Date.now() + 300_000;
+      logger.warn('Rate limit detected from session output');
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Run a single Claude session. Dispatches based on sessionMode.
  */
 export async function runSession(
   prompt: string,
@@ -368,7 +624,17 @@ export async function runSession(
   paths: RelayPaths,
   sessionNum: number
 ): Promise<SessionResult> {
-  return config.tui
-    ? runTuiSession(prompt, config, paths, sessionNum)
-    : runHeadlessSession(prompt, config, paths, sessionNum);
+  switch (config.sessionMode) {
+    case 'print':
+      return runPrintSession(prompt, config, paths, sessionNum);
+    case 'tui':
+      return runTuiSession(prompt, config, paths, sessionNum);
+    case 'headless':
+      return runHeadlessSession(prompt, config, paths, sessionNum);
+    default:
+      // Backward compat: fall back to tui boolean
+      return config.tui
+        ? runTuiSession(prompt, config, paths, sessionNum)
+        : runHeadlessSession(prompt, config, paths, sessionNum);
+  }
 }

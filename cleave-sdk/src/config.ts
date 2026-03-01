@@ -22,6 +22,10 @@ export interface PipelineConfig {
   stages: StageConfig[];
 }
 
+// ── Session mode ──
+
+export type SessionMode = 'tui' | 'print' | 'headless';
+
 // ── Main config ──
 
 export interface CleaveConfig {
@@ -73,7 +77,17 @@ export interface CleaveConfig {
   /** Maximum seconds to wait for rate limit reset */
   rateLimitMaxWait: number;
 
-  /** Show the full Claude Code TUI (default: true). False = headless query() mode. */
+  /**
+   * Session execution mode:
+   *  - 'print'    — (default) non-interactive `claude -p` with stream-json.
+   *                  Most reliable for auto-relay: Claude exits naturally,
+   *                  no file polling or SIGTERM needed.
+   *  - 'tui'      — interactive TUI with file polling + SIGTERM to chain.
+   *  - 'headless' — programmatic Agent SDK query() mode.
+   */
+  sessionMode: SessionMode;
+
+  /** @deprecated Use sessionMode instead. Kept for backward compat. */
   tui: boolean;
 
   /** Whether this is a continuation of a previously completed relay */
@@ -99,6 +113,18 @@ export interface CleaveConfig {
 
   /** Currently active pipeline stage name (set during pipeline execution) */
   activeStage: string | null;
+
+  /** Claude model to use (e.g. 'sonnet', 'opus', 'claude-sonnet-4-6') */
+  model: string | null;
+}
+
+/** Resolve the effective session mode from config (handles backward compat). */
+export function resolveSessionMode(config: CleaveConfig): SessionMode {
+  // Explicit sessionMode takes priority
+  if (config.sessionMode && config.sessionMode !== 'print') return config.sessionMode;
+  // If tui was explicitly set to false and sessionMode wasn't explicitly set
+  if (!config.tui && config.sessionMode === 'print') return 'print';
+  return config.sessionMode;
 }
 
 export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
@@ -117,7 +143,8 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   handoffDeadline: 70,
   knowledgeKeepSessions: 5,
   rateLimitMaxWait: 18000,
-  tui: true,
+  sessionMode: 'print',
+  tui: false,
   sessionTimeout: 1800,   // 30 minutes
   isContinuation: false,
   continuePrompt: null,
@@ -126,9 +153,10 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   resumeStage: null,
   skipStage: null,
   activeStage: null,
+  model: null,
 };
 
-export const VERSION = '5.3.0';
+export const VERSION = '5.4.0';
 
 /**
  * Validate config values at startup. Throws on invalid values.
