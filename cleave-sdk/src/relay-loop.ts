@@ -269,6 +269,23 @@ export async function runRelayLoop(config: CleaveConfig): Promise<void> {
     logger.warn('Found stale .active_relay from previous crash — will be overwritten');
   }
 
+  // ── Stale state cleanup ──
+  // If this is a fresh run (not continuation), clear completion markers
+  // from prior crashed sessions that would cause false "already done" detection.
+  if (!config.isContinuation) {
+    const staleFiles = [paths.handoffSignalFile, paths.progressFile, paths.nextPromptFile];
+    let cleared = false;
+    for (const f of staleFiles) {
+      if (fs.existsSync(f)) {
+        fs.unlinkSync(f);
+        cleared = true;
+      }
+    }
+    if (cleared) {
+      logger.debug('Cleared stale handoff files from previous run');
+    }
+  }
+
   // Cleanup on exit — prevent double-cleanup with flag
   let cleaned = false;
   const cleanup = () => {

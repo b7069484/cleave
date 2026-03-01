@@ -156,7 +156,7 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   model: null,
 };
 
-export const VERSION = '5.4.0';
+export const VERSION = '5.5.0';
 
 /**
  * Validate config values at startup. Throws on invalid values.
