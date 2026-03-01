@@ -15,70 +15,45 @@ import { logger } from './logger';
 export function buildHandoffInstructions(config: CleaveConfig): string {
   return `
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-AUTOMATED SESSION RELAY — MANDATORY INSTRUCTIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━ CLEAVE AUTOMATED RELAY — YOU MUST FOLLOW THESE RULES ━━━━━━━━
 
-You are running inside an automated relay system. Context quality degrades
-predictably: 0-30% = peak quality, 50%+ = declining, 70%+ = errors/hallucinations.
+You are inside an automated relay. Another session will continue your work.
+Your job: make progress AND write handoff files. Both are equally important.
 
-**CONTEXT BUDGET:**
-- **0–${config.handoffThreshold}%** — Do productive work. This is your working zone.
-- **${config.handoffThreshold}%** — STOP productive work. Begin the handoff procedure below.
-- **${config.handoffThreshold}–${config.handoffDeadline}%** — Handoff zone. Write the three files below.
-  This is structured/formulaic output — quality holds fine here.
-- **${config.handoffDeadline}%+** — DANGER. Never reach this. Quality collapses.
+RULE 1 — WRITE HANDOFF FILES EARLY AND OFTEN
+After completing each logical chunk of work (e.g., a batch of files, a phase),
+update .cleave/PROGRESS.md immediately. Do NOT wait until the end.
+If your session crashes, the relay system uses these files to continue.
 
-**50% CHECKPOINT — MANDATORY SELF-ASSESSMENT:**
-When you estimate you've used ~50% of your context window, STOP and do this calculation:
-1. How much work remains? (e.g., "60 more images" or "30 more modules")
-2. How much context did the work so far consume? (e.g., "50% for 80 images")
-3. Will the remaining work fit in the remaining ~20% budget (before ${config.handoffThreshold}%)?
-4. **If NO** — STOP IMMEDIATELY and begin the handoff procedure. Do NOT continue working.
-5. **If YES** — continue, but monitor closely. Stop at ${config.handoffThreshold}% regardless.
+RULE 2 — CONTEXT BUDGET
+- 0–50%: Work zone. Do productive work. Update PROGRESS.md after each batch.
+- 50%: CHECKPOINT. Assess: will remaining work fit? If not, start handoff NOW.
+- ${config.handoffThreshold}%: HARD STOP. Begin handoff procedure immediately.
+- ${config.handoffDeadline}%+: DANGER. Quality collapses. Never reach this.
 
-This checkpoint is MANDATORY. Do not skip it. The relay system will start a new session
-to continue your work — your job is clean progress and clean handoffs, NOT finishing everything.
+RULE 3 — THE HANDOFF PROCEDURE (4 files, do them in order)
 
-When you estimate you've used ~${config.handoffThreshold}% of your context window, STOP working
-and execute the handoff procedure immediately, even if you are in the middle of a batch or task.
+1. Write \`.cleave/PROGRESS.md\`:
+   First line: \`## STATUS: IN_PROGRESS\` (or \`${config.completionMarker}\` if ALL done)
+   Then: what you did, exactly where you stopped, what's left.
 
-**STEP 1 — Update \`.cleave/PROGRESS.md\`:**
-- STATUS: either \`IN_PROGRESS\` or \`${config.completionMarker}\`
-- What you accomplished (specific counts, files, items)
-- Exactly where you stopped (be precise — file, line, item, step)
-- Issues encountered and resolutions
-- Session number and timestamp
+2. Append to \`.cleave/KNOWLEDGE.md\` (DO NOT overwrite — append):
+   Add \`### Session N\` entry with what worked, what failed, key discoveries.
 
-**STEP 2 — Update \`.cleave/KNOWLEDGE.md\`:**
-This file has two sections — read it first, then update:
-\`## Core Knowledge\` — PERMANENT insights every session needs (API keys, working
-  search terms, critical config, architectural decisions). If you discover something
-  universally important, add it here. Keep it concise — this section is never pruned.
-\`## Session Log\` — Your session-specific notes. APPEND a new entry at the bottom:
-  Format: \`### Session N — [Date]\` followed by bullet points.
-  Include: what worked, what failed, dead ends, performance observations.
-  This section is auto-pruned to the last 5 entries by the relay script, so
-  promote anything permanently valuable up to Core Knowledge before it's lost.
-IMPORTANT: APPEND to this file. Do not overwrite or reorganize existing content.
+3. Write \`.cleave/NEXT_PROMPT.md\`:
+   Full instructions for the next session (it has ZERO memory of yours).
+   Include: task context, what's done, where to resume, key file paths.
+   End with: "When at ~${config.handoffThreshold}% context, STOP and do the handoff procedure."
 
-**STEP 3 — Write \`.cleave/NEXT_PROMPT.md\`:**
-The EXACT prompt for the next session (fed verbatim). Include:
-- Full task context (the next session has zero memory)
-- What scripts/tools exist and how to use them
-- Setup steps (venv, env vars, etc.)
-- Exactly where to resume
-- Reference KNOWLEDGE.md: tell next session to read it
-- Do NOT copy these relay instructions into NEXT_PROMPT.md — they are appended automatically by the relay system
-- End with: "When at ~${config.handoffThreshold}% context, STOP and do the handoff procedure."
+4. Write \`HANDOFF_COMPLETE\` to \`.cleave/.handoff_signal\`
+   Then print RELAY_HANDOFF_COMPLETE and stop.
 
-**STEP 4 — Signal completion:**
-Write the text \`HANDOFF_COMPLETE\` to the file \`.cleave/.handoff_signal\` (create or overwrite).
-Then print \`RELAY_HANDOFF_COMPLETE\` to confirm, and stop immediately.
+If ALL work is done: set \`STATUS: ${config.completionMarker}\` in PROGRESS.md,
+write \`TASK_FULLY_COMPLETE\` to .handoff_signal, print TASK_FULLY_COMPLETE.
 
-If ALL work is done, write \`STATUS: ${config.completionMarker}\` in PROGRESS.md,
-write \`TASK_FULLY_COMPLETE\` to \`.cleave/.handoff_signal\`,
-and print \`TASK_FULLY_COMPLETE\` to confirm.
+CRITICAL: The relay system has a safety net — if you exit without handoff files,
+it will auto-generate rescue files from your git changes. But this is a FALLBACK.
+You should ALWAYS write the handoff files yourself for best continuity.
 `;
 }
 
