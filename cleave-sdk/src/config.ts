@@ -143,8 +143,8 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   handoffDeadline: 70,
   knowledgeKeepSessions: 5,
   rateLimitMaxWait: 18000,
-  sessionMode: 'print',
-  tui: false,
+  sessionMode: 'tui',
+  tui: true,
   sessionTimeout: 1800,   // 30 minutes
   isContinuation: false,
   continuePrompt: null,

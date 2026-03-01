@@ -284,6 +284,30 @@ async function runTuiSession(
     }
   }
 
+  // ── Rescue handoff for TUI mode ──
+  // If the TUI exited (timeout, crash, user Ctrl+C) without valid handoff
+  // files, write rescue files so the relay chain continues.
+  if (!result.rateLimited && !killedByRelay) {
+    const handoff = hasValidHandoff(paths);
+    if (!handoff.complete && !handoff.handedOff) {
+      // Check if any real work was done (git changes or file modifications)
+      const hasGitChanges = (() => {
+        try {
+          const { execSync } = require('child_process');
+          const out = execSync('git diff --stat HEAD 2>/dev/null || true', {
+            cwd: config.workDir, encoding: 'utf8', timeout: 5000
+          });
+          return out.trim().length > 0;
+        } catch { return false; }
+      })();
+
+      if (hasGitChanges) {
+        writeRescueHandoff(paths, config, sessionNum, result.exitCode, 0, 'unknown (TUI)');
+        result.exitCode = 0;
+      }
+    }
+  }
+
   return result;
 }
 
