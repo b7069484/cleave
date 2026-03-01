@@ -6,7 +6,7 @@
 import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CleaveConfig, DEFAULT_CONFIG, VERSION, validateConfig } from './config';
+import { CleaveConfig, SessionMode, DEFAULT_CONFIG, VERSION, validateConfig } from './config';
 import { loadPipelineConfig } from './pipeline-config';
 
 /**
@@ -25,7 +25,10 @@ function addSharedOptions(cmd: Command): Command {
     .option('--safe-mode', 'Require permission prompts (default)', DEFAULT_CONFIG.safeMode)
     .option('--dangerously-skip-permissions', 'Skip Claude Code permission prompts')
     .option('-v, --verbose', 'Detailed logging', DEFAULT_CONFIG.verbose)
-    .option('--no-tui', 'Headless mode — use Agent SDK query() instead of TUI')
+    .option('--mode <mode>', 'Session mode: print (default, most reliable), tui (interactive), headless (Agent SDK)', DEFAULT_CONFIG.sessionMode)
+    .option('--tui', 'Shorthand for --mode tui (interactive Claude Code TUI)')
+    .option('--no-tui', 'Deprecated — use --mode headless')
+    .option('--model <model>', 'Claude model to use (e.g. sonnet, opus, claude-sonnet-4-6)')
     .option('--session-timeout <seconds>', 'Max seconds per session, 0=unlimited (default: 1800)', String(DEFAULT_CONFIG.sessionTimeout));
 }
 
@@ -58,6 +61,20 @@ function validateAndBuildConfig(opts: any, program: Command): Partial<CleaveConf
     program.error(`Error: work directory not found: ${workDir}`);
   }
 
+  // Resolve session mode: --mode > --tui > --no-tui > default
+  let sessionMode: SessionMode = DEFAULT_CONFIG.sessionMode;
+  if (opts.mode) {
+    if (!['tui', 'print', 'headless'].includes(opts.mode)) {
+      program.error(`Error: --mode must be one of: tui, print, headless (got: ${opts.mode})`);
+    }
+    sessionMode = opts.mode as SessionMode;
+  } else if (opts.tui === true) {
+    sessionMode = 'tui';
+  } else if (opts.tui === false) {
+    // --no-tui backward compat → headless
+    sessionMode = 'headless';
+  }
+
   return {
     maxSessions: parseInt(process.env.CLEAVE_MAX_SESSIONS || '', 10) || maxSessions,
     workDir,
@@ -73,8 +90,10 @@ function validateAndBuildConfig(opts: any, program: Command): Partial<CleaveConf
     handoffDeadline: DEFAULT_CONFIG.handoffDeadline,
     knowledgeKeepSessions: DEFAULT_CONFIG.knowledgeKeepSessions,
     rateLimitMaxWait: DEFAULT_CONFIG.rateLimitMaxWait,
-    tui: opts.tui ?? DEFAULT_CONFIG.tui,
+    sessionMode,
+    tui: sessionMode === 'tui',
     sessionTimeout,
+    model: opts.model || null,
   };
 }
 
