@@ -37,6 +37,26 @@ export class RelayLoop extends EventEmitter {
     }
   }
 
+  /**
+   * Dynamically update the max sessions limit. Takes effect on the next loop iteration.
+   * Persists to disk so `cleave resume` picks it up.
+   */
+  updateMaxSessions(n: number): void {
+    this.config.maxSessions = n;
+    this.state.setMaxSessions(n);
+    this.emit('config_change', { maxSessions: n, sessionBudget: this.config.sessionBudget });
+  }
+
+  /**
+   * Dynamically update the per-session budget. Takes effect on the next session spawn.
+   * Persists to disk so `cleave resume` picks it up.
+   */
+  updateSessionBudget(n: number): void {
+    this.config.sessionBudget = n;
+    this.state.setSessionBudget(n);
+    this.emit('config_change', { maxSessions: this.config.maxSessions, sessionBudget: n });
+  }
+
   private async waitForTransition(): Promise<string | undefined> {
     if (this.config.mode === 'auto' || this.config.mode === 'headless') {
       // Auto/headless: no pause, continue immediately
@@ -79,8 +99,6 @@ export class RelayLoop extends EventEmitter {
         progress: await this.state.readProgress(),
       });
 
-      this.emit('session_start', { sessionNum: i, maxSessions: this.config.maxSessions });
-
       // Run the session
       const runner = new SessionRunner({
         projectDir: this.config.projectDir,
@@ -97,6 +115,8 @@ export class RelayLoop extends EventEmitter {
       runner.on('event', (event: ParsedEvent) => {
         this.emit('event', event);
       });
+
+      this.emit('session_start', { sessionNum: i, maxSessions: this.config.maxSessions });
 
       let sessionResult: SessionResult;
       try {
