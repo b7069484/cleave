@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import type { RunningAgent } from './useRelay.js';
 
 interface FooterProps {
-  knowledgeSize: number;
+  knowledge: { insights: number; coreBytes: number; sessionBytes: number };
   handoffsCompleted: number;
   maxHandoffs: number;
   runningAgents: RunningAgent[];
@@ -12,8 +12,7 @@ interface FooterProps {
   sessionBudget: number;
 }
 
-export function Footer({ knowledgeSize, handoffsCompleted, maxHandoffs, runningAgents, sessionNum, maxSessions, sessionBudget }: FooterProps) {
-  const kbSize = (knowledgeSize / 1024).toFixed(1);
+export function Footer({ knowledge, handoffsCompleted, maxHandoffs, runningAgents, sessionNum, maxSessions, sessionBudget }: FooterProps) {
 
   return (
     <Box flexDirection="column">
@@ -34,7 +33,10 @@ export function Footer({ knowledgeSize, handoffsCompleted, maxHandoffs, runningA
       )}
       <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
         <Box justifyContent="space-between">
-          <Text>Knowledge: <Text bold>{kbSize} KB</Text></Text>
+          <Text>
+            Knowledge: <Text bold>{knowledge.insights} insights</Text>
+            <Text dimColor> · {(knowledge.coreBytes / 1024).toFixed(1)} KB core / {(knowledge.sessionBytes / 1024).toFixed(1)} KB session</Text>
+          </Text>
           <Text>Handoffs: <Text bold color={handoffsCompleted > 0 ? 'green' : 'gray'}>{handoffsCompleted}/{maxHandoffs}</Text></Text>
         </Box>
         <Box justifyContent="space-between">

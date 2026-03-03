@@ -94,7 +94,7 @@ export function App({ config }: AppProps) {
         <StreamView events={state.events} />
       )}
       <Footer
-        knowledgeSize={state.knowledgeBytes}
+        knowledge={state.knowledge}
         handoffsCompleted={state.handoffsCompleted}
         maxHandoffs={Math.max(0, state.maxSessions - 1)}
         runningAgents={state.runningAgents}

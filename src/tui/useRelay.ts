@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { statSync, appendFileSync, mkdirSync } from 'node:fs';
+import { statSync, readFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { RelayLoop } from '../relay/loop.js';
 import type { RelayConfig } from '../relay/config.js';
 import type { ParsedEvent } from '../stream/types.js';
 import type { LimitType } from './LimitOverlay.js';
+import { parseKnowledgeMetrics } from '../state/knowledge.js';
 
 export type RelayPhase = 'running' | 'transition' | 'complete' | 'error';
 
@@ -26,7 +27,7 @@ export interface RelayState {
   contextPercent: number;
   elapsedMs: number;
   toolCount: number;
-  knowledgeBytes: number;
+  knowledge: { insights: number; coreBytes: number; sessionBytes: number };
   handoffsCompleted: number; // Successful handoffs (increments when new session starts)
   runningAgents: RunningAgent[];
   error?: string;
@@ -47,7 +48,7 @@ export function useRelay(config: RelayConfig) {
     contextPercent: 0,
     elapsedMs: 0,
     toolCount: 0,
-    knowledgeBytes: 0,
+    knowledge: { insights: 0, coreBytes: 0, sessionBytes: 0 },
     handoffsCompleted: 0,
     runningAgents: [],
     completed: false,
@@ -75,12 +76,16 @@ export function useRelay(config: RelayConfig) {
     // Elapsed time ticker + knowledge file poll
     const kPath = join(config.projectDir, '.cleave', 'KNOWLEDGE.md');
     timerRef.current = setInterval(() => {
-      let knowledgeBytes: number | undefined;
-      try { knowledgeBytes = statSync(kPath).size; } catch { /* not created yet */ }
+      let knowledge: { insights: number; coreBytes: number; sessionBytes: number } | undefined;
+      try {
+        const content = readFileSync(kPath, 'utf-8');
+        const metrics = parseKnowledgeMetrics(content);
+        knowledge = { insights: metrics.insightCount, coreBytes: metrics.coreSizeBytes, sessionBytes: metrics.sessionSizeBytes };
+      } catch { /* not created yet */ }
       setState(s => ({
         ...s,
         elapsedMs: Date.now() - startTimeRef.current,
-        ...(knowledgeBytes !== undefined ? { knowledgeBytes } : {}),
+        ...(knowledge !== undefined ? { knowledge } : {}),
       }));
     }, 1000);
 
@@ -91,10 +96,12 @@ export function useRelay(config: RelayConfig) {
       startTimeRef.current = Date.now();
       logEvent('session_start', { sessionNum, maxSessions });
 
-      // Read knowledge size at session start
-      let knowledgeBytes = 0;
+      // Read knowledge metrics at session start
+      let knowledge = { insights: 0, coreBytes: 0, sessionBytes: 0 };
       try {
-        knowledgeBytes = statSync(kPath).size;
+        const content = readFileSync(kPath, 'utf-8');
+        const metrics = parseKnowledgeMetrics(content);
+        knowledge = { insights: metrics.insightCount, coreBytes: metrics.coreSizeBytes, sessionBytes: metrics.sessionSizeBytes };
       } catch { /* not created yet */ }
 
       setState(s => ({
@@ -107,7 +114,7 @@ export function useRelay(config: RelayConfig) {
         totalCostUsd: cumulativeCostRef.current,
         contextPercent: 0,
         toolCount: 0,
-        knowledgeBytes,
+        knowledge,
         // Session 2+ starting means a handoff succeeded
         handoffsCompleted: sessionNum > 1 ? sessionNum - 1 : 0,
         runningAgents: [],
