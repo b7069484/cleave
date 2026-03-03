@@ -1,2 +1,4 @@
 #!/usr/bin/env node
-console.log('cleave v6.0.0');
+import { createCli } from './cli.js';
+
+createCli().parse();
