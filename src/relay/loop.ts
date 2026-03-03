@@ -76,104 +76,65 @@ export class RelayLoop extends EventEmitter {
     let totalCost = 0;
     let totalDuration = 0;
 
-    for (let i = 1; i <= this.config.maxSessions; i++) {
-      sessionsRun = i;
-      await this.state.setSessionCount(i);
-      await this.state.clearHandoffSignal();
-      await this.state.markSessionStart();
+    // Outer loop allows continuation after max sessions or completion
+    while (true) {
+      while (sessionsRun < this.config.maxSessions) {
+        sessionsRun++;
+        const i = sessionsRun;
+        await this.state.setSessionCount(i);
+        await this.state.clearHandoffSignal();
+        await this.state.markSessionStart();
 
-      // Compact knowledge before each session
-      const rawKnowledge = await this.state.readKnowledge();
-      if (rawKnowledge.trim()) {
-        const compacted = compactKnowledge(rawKnowledge, this.config.maxSessionLogEntries);
-        await this.state.writeKnowledge(compacted);
-      }
-
-      // Build the prompt
-      const prompt = buildSessionPrompt({
-        sessionNum: i,
-        maxSessions: this.config.maxSessions,
-        initialTask: this.config.initialTask,
-        nextPrompt: await this.state.readNextPrompt(),
-        knowledge: await this.state.readKnowledge(),
-        progress: await this.state.readProgress(),
-      });
-
-      // Run the session
-      const runner = new SessionRunner({
-        projectDir: this.config.projectDir,
-        prompt,
-        handoffInstructions: buildHandoffInstructions(this.config.projectDir),
-        budget: this.config.sessionBudget,
-        model: this.config.model,
-        verbose: this.config.verbose,
-        skipPermissions: this.config.skipPermissions,
-        allowedTools: this.config.allowedTools,
-        remoteControl: this.config.remoteControl,
-      });
-
-      // Forward events from session to relay
-      runner.on('event', (event: ParsedEvent) => {
-        this.emit('event', event);
-      });
-
-      runner.on('remote_url', (url: string) => {
-        this.emit('remote_url', url);
-      });
-
-      this.emit('session_start', { sessionNum: i, maxSessions: this.config.maxSessions });
-
-      let sessionResult: SessionResult;
-      try {
-        sessionResult = await runner.run();
-      } catch (err) {
-        this.emit('session_error', { sessionNum: i, error: err });
-        await generateRescueHandoff(this.state, i, this.config.initialTask);
-
-        // Emit transition and wait (in guided mode)
-        this.emit('transition', { sessionNum: i, type: 'rescue' });
-        const userInput = await this.waitForTransition();
-        if (userInput) {
-          const existing = await this.state.readNextPrompt();
-          await this.state.writeNextPrompt(
-            `## User Instructions\n${userInput}\n\n${existing}`
-          );
+        // Compact knowledge before each session
+        const rawKnowledge = await this.state.readKnowledge();
+        if (rawKnowledge.trim()) {
+          const compacted = compactKnowledge(rawKnowledge, this.config.maxSessionLogEntries);
+          await this.state.writeKnowledge(compacted);
         }
-        continue;
-      }
 
-      totalCost += sessionResult.totalCostUsd || sessionResult.costUsd;
-      totalDuration += sessionResult.durationMs;
+        // Build the prompt
+        const prompt = buildSessionPrompt({
+          sessionNum: i,
+          maxSessions: this.config.maxSessions,
+          initialTask: this.config.initialTask,
+          nextPrompt: await this.state.readNextPrompt(),
+          knowledge: await this.state.readKnowledge(),
+          progress: await this.state.readProgress(),
+        });
 
-      // Archive session files
-      await this.state.archiveSession(i);
+        // Run the session
+        const runner = new SessionRunner({
+          projectDir: this.config.projectDir,
+          prompt,
+          handoffInstructions: buildHandoffInstructions(this.config.projectDir),
+          budget: this.config.sessionBudget,
+          model: this.config.model,
+          verbose: this.config.verbose,
+          skipPermissions: this.config.skipPermissions,
+          allowedTools: this.config.allowedTools,
+          remoteControl: this.config.remoteControl,
+        });
 
-      // Check for handoff
-      const handoff = await detectHandoff(this.state);
+        // Forward events from session to relay
+        runner.on('event', (event: ParsedEvent) => {
+          this.emit('event', event);
+        });
 
-      if (handoff === 'complete') {
-        this.emit('session_end', { sessionNum: i, result: sessionResult, totalCost });
-        return {
-          sessionsRun,
-          completed: true,
-          reason: 'task_complete',
-          totalCostUsd: totalCost,
-          totalDurationMs: totalDuration,
-        };
-      }
+        runner.on('remote_url', (url: string) => {
+          this.emit('remote_url', url);
+        });
 
-      if (handoff === 'handoff' || handoff === null) {
-        if (handoff === null) {
-          // No handoff signal — generate rescue
-          this.emit('rescue', { sessionNum: i });
+        this.emit('session_start', { sessionNum: i, maxSessions: this.config.maxSessions });
+
+        let sessionResult: SessionResult;
+        try {
+          sessionResult = await runner.run();
+        } catch (err) {
+          this.emit('session_error', { sessionNum: i, error: err });
           await generateRescueHandoff(this.state, i, this.config.initialTask);
-        }
 
-        // Don't emit transition for the last session
-        if (i < this.config.maxSessions) {
-          this.emit('session_end', { sessionNum: i, result: sessionResult, totalCost });
-
-          // Wait for transition (guided mode pauses here)
+          // Emit transition and wait (in guided mode)
+          this.emit('transition', { sessionNum: i, type: 'rescue' });
           const userInput = await this.waitForTransition();
           if (userInput) {
             const existing = await this.state.readNextPrompt();
@@ -181,16 +142,122 @@ export class RelayLoop extends EventEmitter {
               `## User Instructions\n${userInput}\n\n${existing}`
             );
           }
+          continue;
+        }
+
+        totalCost += sessionResult.totalCostUsd || sessionResult.costUsd;
+        totalDuration += sessionResult.durationMs;
+
+        // Archive session files
+        await this.state.archiveSession(i);
+
+        // Check for handoff
+        const handoff = await detectHandoff(this.state);
+
+        if (handoff === 'complete') {
+          this.emit('session_end', { sessionNum: i, result: sessionResult, totalCost });
+
+          // In auto/headless mode, return immediately (no pause)
+          if (this.config.mode === 'auto' || this.config.mode === 'headless') {
+            return {
+              sessionsRun,
+              completed: true,
+              reason: 'task_complete',
+              totalCostUsd: totalCost,
+              totalDurationMs: totalDuration,
+            };
+          }
+
+          // Guided mode: emit completion and wait for user decision
+          this.emit('completion', {
+            reason: 'task_complete',
+            sessionsRun,
+            totalCostUsd: totalCost,
+            totalDurationMs: totalDuration,
+          });
+
+          const userInput = await this.waitForTransition();
+          if (!userInput) {
+            // User chose to quit
+            return {
+              sessionsRun,
+              completed: true,
+              reason: 'task_complete',
+              totalCostUsd: totalCost,
+              totalDurationMs: totalDuration,
+            };
+          }
+
+          // User provided follow-up — inject and continue
+          await this.state.clearHandoffSignal();
+          await this.state.writeNextPrompt(`## User Instructions\n${userInput}`);
+          if (sessionsRun >= this.config.maxSessions) {
+            this.updateMaxSessions(this.config.maxSessions + 1);
+          }
+          continue;
+        }
+
+        if (handoff === 'handoff' || handoff === null) {
+          if (handoff === null) {
+            // No handoff signal — generate rescue
+            this.emit('rescue', { sessionNum: i });
+            await generateRescueHandoff(this.state, i, this.config.initialTask);
+          }
+
+          // Don't emit transition for the last session (handled by outer loop)
+          if (i < this.config.maxSessions) {
+            this.emit('session_end', { sessionNum: i, result: sessionResult, totalCost });
+
+            // Wait for transition (guided mode pauses here)
+            const userInput = await this.waitForTransition();
+            if (userInput) {
+              const existing = await this.state.readNextPrompt();
+              await this.state.writeNextPrompt(
+                `## User Instructions\n${userInput}\n\n${existing}`
+              );
+            }
+          }
         }
       }
-    }
 
-    return {
-      sessionsRun,
-      completed: false,
-      reason: 'max_sessions',
-      totalCostUsd: totalCost,
-      totalDurationMs: totalDuration,
-    };
+      // Max sessions reached
+      // In auto/headless mode, return immediately
+      if (this.config.mode === 'auto' || this.config.mode === 'headless') {
+        return {
+          sessionsRun,
+          completed: false,
+          reason: 'max_sessions',
+          totalCostUsd: totalCost,
+          totalDurationMs: totalDuration,
+        };
+      }
+
+      // Guided mode: emit completion and wait for user decision
+      this.emit('completion', {
+        reason: 'max_sessions',
+        sessionsRun,
+        totalCostUsd: totalCost,
+        totalDurationMs: totalDuration,
+      });
+
+      const userInput = await this.waitForTransition();
+      if (!userInput) {
+        // User chose to quit
+        return {
+          sessionsRun,
+          completed: false,
+          reason: 'max_sessions',
+          totalCostUsd: totalCost,
+          totalDurationMs: totalDuration,
+        };
+      }
+
+      // User provided follow-up — inject prompt and extend sessions
+      await this.state.writeNextPrompt(`## User Instructions\n${userInput}`);
+      if (sessionsRun >= this.config.maxSessions) {
+        this.updateMaxSessions(this.config.maxSessions + 1);
+      }
+      // Continue outer loop — inner while will now have room
+    }
   }
 }
