@@ -1,4 +1,0 @@
-{
-  "description": "Cleave plugin hooks — intentionally empty. Hook enforcement is handled by the Cleave SDK via generateSettingsFile() which copies scripts to /tmp/ to avoid Claude Code's space-in-path bug. Plugin hooks using ${CLAUDE_PLUGIN_ROOT} break when installed in paths with spaces (e.g., 'Cleave Code').",
-  "hooks": {}
-}
