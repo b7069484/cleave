@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { RelayLoop } from '../relay/loop.js';
 import type { RelayConfig } from '../relay/config.js';
 import type { ParsedEvent } from '../stream/types.js';
+import type { LimitType } from './LimitOverlay.js';
 
 export type RelayPhase = 'running' | 'transition' | 'complete' | 'error';
 
@@ -31,6 +32,7 @@ export interface RelayState {
   error?: string;
   completed: boolean;
   totalSessions: number;
+  overlayMode: LimitType | null;
 }
 
 export function useRelay(config: RelayConfig) {
@@ -50,6 +52,7 @@ export function useRelay(config: RelayConfig) {
     runningAgents: [],
     completed: false,
     totalSessions: 0,
+    overlayMode: null,
   });
 
   const startTimeRef = useRef(Date.now());
@@ -192,6 +195,14 @@ export function useRelay(config: RelayConfig) {
       }
     });
 
+    loop.on('config_change', ({ maxSessions, sessionBudget }: { maxSessions: number; sessionBudget: number }) => {
+      setState(s => ({
+        ...s,
+        maxSessions,
+        budgetUsd: sessionBudget,
+      }));
+    });
+
     loop.run().then(result => {
       logEvent('relay_complete', result);
       setState(s => ({
@@ -217,5 +228,23 @@ export function useRelay(config: RelayConfig) {
     loopRef.current?.resolveTransition(userInput);
   }, []);
 
-  return { state, advanceFromTransition };
+  const openOverlay = useCallback((type: LimitType) => {
+    setState(s => ({ ...s, overlayMode: type }));
+  }, []);
+
+  const closeOverlay = useCallback(() => {
+    setState(s => ({ ...s, overlayMode: null }));
+  }, []);
+
+  const updateMaxSessions = useCallback((n: number) => {
+    loopRef.current?.updateMaxSessions(n);
+    setState(s => ({ ...s, overlayMode: null }));
+  }, []);
+
+  const updateSessionBudget = useCallback((n: number) => {
+    loopRef.current?.updateSessionBudget(n);
+    setState(s => ({ ...s, overlayMode: null }));
+  }, []);
+
+  return { state, advanceFromTransition, openOverlay, closeOverlay, updateMaxSessions, updateSessionBudget };
 }
