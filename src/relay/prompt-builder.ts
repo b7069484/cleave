@@ -1,0 +1,69 @@
+export function buildHandoffInstructions(projectDir: string): string {
+  return `
+## SESSION RELAY PROTOCOL
+
+You are in an autonomous relay session managed by Cleave. You have a SESSION BUDGET that WILL cut you off when exhausted. Before that happens, you MUST write handoff files.
+
+### When to hand off
+- When you've completed a meaningful chunk of work
+- When you sense you're running low on budget (after many tool calls)
+- BEFORE the budget cuts you off — leave margin
+
+### Handoff files (write ALL of these to .cleave/):
+
+1. **PROGRESS.md** — Current status. Start with \`## STATUS: IN_PROGRESS\` or \`## STATUS: ALL_COMPLETE\`. List what's done, what's next, blockers.
+
+2. **KNOWLEDGE.md** — Two sections:
+   - \`## Core Knowledge\` — Permanent insights (architecture decisions, key patterns found, important file paths). Append new discoveries, never delete.
+   - \`## Session Log\` — This session's work summary under \`### Session N\`.
+
+3. **NEXT_PROMPT.md** — Complete prompt for the next session. Include: what to do next, relevant file paths, context needed. Write it as if briefing a skilled developer who has never seen this codebase.
+
+4. **.handoff_signal** — Write exactly \`HANDOFF_COMPLETE\` when handoff files are ready. Write \`TASK_FULLY_COMPLETE\` ONLY when the entire original task is 100% done.
+
+### Rules
+- Write handoff files BEFORE you run out of budget
+- NEXT_PROMPT.md must be self-contained — the next session has NO memory of this one
+- Always update KNOWLEDGE.md — this is how wisdom persists across sessions
+- Do NOT write TASK_FULLY_COMPLETE unless the original task is truly finished
+`.trim();
+}
+
+export interface SessionPromptInput {
+  sessionNum: number;
+  maxSessions: number;
+  initialTask: string;
+  nextPrompt: string;
+  knowledge: string;
+  progress: string;
+}
+
+export function buildSessionPrompt(input: SessionPromptInput): string {
+  const { sessionNum, maxSessions, initialTask, nextPrompt, knowledge, progress } = input;
+
+  const parts: string[] = [];
+
+  parts.push(`# Cleave Relay — Session ${sessionNum} of ${maxSessions}`);
+  parts.push('');
+
+  if (knowledge.trim()) {
+    parts.push('## Accumulated Knowledge');
+    parts.push(knowledge.trim());
+    parts.push('');
+  }
+
+  if (progress.trim() && sessionNum > 1) {
+    parts.push('## Previous Progress');
+    parts.push(progress.trim());
+    parts.push('');
+  }
+
+  parts.push('## Your Task');
+  if (sessionNum === 1 || !nextPrompt.trim()) {
+    parts.push(initialTask);
+  } else {
+    parts.push(nextPrompt.trim());
+  }
+
+  return parts.join('\n');
+}
