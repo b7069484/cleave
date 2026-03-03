@@ -109,11 +109,16 @@ export class RelayLoop extends EventEmitter {
         verbose: this.config.verbose,
         skipPermissions: this.config.skipPermissions,
         allowedTools: this.config.allowedTools,
+        remoteControl: this.config.remoteControl,
       });
 
       // Forward events from session to relay
       runner.on('event', (event: ParsedEvent) => {
         this.emit('event', event);
+      });
+
+      runner.on('remote_url', (url: string) => {
+        this.emit('remote_url', url);
       });
 
       this.emit('session_start', { sessionNum: i, maxSessions: this.config.maxSessions });
