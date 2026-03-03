@@ -5,6 +5,7 @@ import { StreamView } from './StreamView.js';
 import { Footer } from './Footer.js';
 import { Transition } from './Transition.js';
 import { LimitOverlay } from './LimitOverlay.js';
+import { CompletionTransition } from './CompletionTransition.js';
 import { useRelay } from './useRelay.js';
 import type { RelayConfig } from '../relay/config.js';
 
@@ -13,12 +14,12 @@ interface AppProps {
 }
 
 export function App({ config }: AppProps) {
-  const { state, advanceFromTransition, openOverlay, closeOverlay, updateMaxSessions, updateSessionBudget } = useRelay(config);
+  const { state, advanceFromTransition, openOverlay, closeOverlay, updateMaxSessions, updateSessionBudget, quitRelay } = useRelay(config);
 
   // Global hotkeys for s/b (only when no overlay is active and not in transition text input)
   useInput((input, key) => {
     if (state.overlayMode) return;
-    if (state.phase === 'complete' || state.phase === 'error') return;
+    if (state.phase === 'complete' || state.phase === 'done' || state.phase === 'error') return;
 
     if (input === 's' || input === 'S') {
       openOverlay('sessions');
@@ -28,13 +29,42 @@ export function App({ config }: AppProps) {
   }, { isActive: !state.overlayMode && state.phase !== 'transition' });
 
   if (state.phase === 'complete') {
+    if (state.overlayMode) {
+      return (
+        <LimitOverlay
+          type={state.overlayMode}
+          currentValue={state.overlayMode === 'sessions' ? state.maxSessions : state.budgetUsd}
+          sessionNum={state.sessionNum}
+          maxSessions={state.maxSessions}
+          onConfirm={(n) => {
+            updateMaxSessions(n);
+            closeOverlay();
+            advanceFromTransition('Continue with extended session limit');
+          }}
+          onCancel={closeOverlay}
+        />
+      );
+    }
+
+    return (
+      <CompletionTransition
+        completed={state.completed}
+        sessionsRun={state.totalSessions || state.sessionNum}
+        totalCostUsd={state.totalCostUsd}
+        progressSummary={state.progressSummary ?? ''}
+        onContinue={advanceFromTransition}
+        onAddSessions={() => openOverlay('sessions')}
+        onQuit={quitRelay}
+      />
+    );
+  }
+
+  if (state.phase === 'done') {
     return (
       <Box flexDirection="column" padding={1}>
-        <Box borderStyle="double" borderColor={state.completed ? 'green' : 'yellow'} padding={1} flexDirection="column" alignItems="center">
-          <Text bold color={state.completed ? 'green' : 'yellow'}>
-            {state.completed ? 'TASK COMPLETE' : 'SESSION LIMIT REACHED'}
-          </Text>
-          <Text>Sessions run: {state.totalSessions}</Text>
+        <Box borderStyle="double" borderColor="green" padding={1} flexDirection="column" alignItems="center">
+          <Text bold color="green">{state.completed ? 'TASK COMPLETE' : 'SESSION LIMIT REACHED'}</Text>
+          <Text>Sessions: {state.totalSessions}</Text>
           <Text>Total cost: ${state.totalCostUsd.toFixed(2)}</Text>
         </Box>
       </Box>

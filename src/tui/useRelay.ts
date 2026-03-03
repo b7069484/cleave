@@ -7,7 +7,7 @@ import type { ParsedEvent } from '../stream/types.js';
 import type { LimitType } from './LimitOverlay.js';
 import { parseKnowledgeMetrics } from '../state/knowledge.js';
 
-export type RelayPhase = 'running' | 'transition' | 'complete' | 'error';
+export type RelayPhase = 'running' | 'transition' | 'complete' | 'done' | 'error';
 
 export interface RunningAgent {
   id: string;
@@ -31,6 +31,7 @@ export interface RelayState {
   handoffsCompleted: number; // Successful handoffs (increments when new session starts)
   remoteUrl: string;
   runningAgents: RunningAgent[];
+  progressSummary: string;
   error?: string;
   completed: boolean;
   totalSessions: number;
@@ -53,6 +54,7 @@ export function useRelay(config: RelayConfig) {
     handoffsCompleted: 0,
     remoteUrl: '',
     runningAgents: [],
+    progressSummary: '',
     completed: false,
     totalSessions: 0,
     overlayMode: null,
@@ -217,11 +219,24 @@ export function useRelay(config: RelayConfig) {
       }));
     });
 
+    loop.on('completion', () => {
+      // Read progress for display on the completion screen
+      const progressFile = join(config.projectDir, '.cleave', 'PROGRESS.md');
+      let progressSummary = '';
+      try { progressSummary = readFileSync(progressFile, 'utf-8'); } catch { /* ok */ }
+
+      setState(s => ({
+        ...s,
+        phase: 'complete',
+        progressSummary,
+      }));
+    });
+
     loop.run().then(result => {
       logEvent('relay_complete', result);
       setState(s => ({
         ...s,
-        phase: 'complete',
+        phase: 'done',
         completed: result.completed,
         totalSessions: result.sessionsRun,
         totalCostUsd: result.totalCostUsd || cumulativeCostRef.current,
@@ -260,5 +275,9 @@ export function useRelay(config: RelayConfig) {
     setState(s => ({ ...s, overlayMode: null }));
   }, []);
 
-  return { state, advanceFromTransition, openOverlay, closeOverlay, updateMaxSessions, updateSessionBudget };
+  const quitRelay = useCallback(() => {
+    loopRef.current?.resolveTransition(undefined);
+  }, []);
+
+  return { state, advanceFromTransition, openOverlay, closeOverlay, updateMaxSessions, updateSessionBudget, quitRelay };
 }
