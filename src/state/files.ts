@@ -25,6 +25,28 @@ export class CleaveState {
     await this.writeInternal('.session_count', String(n));
   }
 
+  // Persisted max sessions (for dynamic limit adjustment)
+  async getMaxSessions(): Promise<number | null> {
+    const content = await this.readInternal('.max_sessions');
+    const parsed = parseInt(content.trim(), 10);
+    return isNaN(parsed) ? null : parsed;
+  }
+
+  async setMaxSessions(n: number): Promise<void> {
+    await this.writeInternal('.max_sessions', String(n));
+  }
+
+  // Persisted session budget (for dynamic limit adjustment)
+  async getSessionBudget(): Promise<number | null> {
+    const content = await this.readInternal('.session_budget');
+    const parsed = parseFloat(content.trim());
+    return isNaN(parsed) ? null : parsed;
+  }
+
+  async setSessionBudget(n: number): Promise<void> {
+    await this.writeInternal('.session_budget', String(n));
+  }
+
   // Session start timestamp
   async markSessionStart(): Promise<void> {
     await this.writeInternal('.session_start', String(Date.now()));
