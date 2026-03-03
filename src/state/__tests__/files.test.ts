@@ -82,4 +82,18 @@ describe('CleaveState', () => {
     expect(ts).toBeGreaterThanOrEqual(before);
     expect(ts).toBeLessThanOrEqual(Date.now());
   });
+
+  it('reads and writes max sessions', async () => {
+    await state.init();
+    expect(await state.getMaxSessions()).toBeNull();
+    await state.setMaxSessions(30);
+    expect(await state.getMaxSessions()).toBe(30);
+  });
+
+  it('reads and writes session budget', async () => {
+    await state.init();
+    expect(await state.getSessionBudget()).toBeNull();
+    await state.setSessionBudget(8.5);
+    expect(await state.getSessionBudget()).toBeCloseTo(8.5);
+  });
 });

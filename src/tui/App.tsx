@@ -1,9 +1,10 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import { Header } from './Header.js';
 import { StreamView } from './StreamView.js';
 import { Footer } from './Footer.js';
 import { Transition } from './Transition.js';
+import { LimitOverlay } from './LimitOverlay.js';
 import { useRelay } from './useRelay.js';
 import type { RelayConfig } from '../relay/config.js';
 
@@ -12,7 +13,19 @@ interface AppProps {
 }
 
 export function App({ config }: AppProps) {
-  const { state, advanceFromTransition } = useRelay(config);
+  const { state, advanceFromTransition, openOverlay, closeOverlay, updateMaxSessions, updateSessionBudget } = useRelay(config);
+
+  // Global hotkeys for s/b (only when no overlay is active and not in transition text input)
+  useInput((input, key) => {
+    if (state.overlayMode) return;
+    if (state.phase === 'complete' || state.phase === 'error') return;
+
+    if (input === 's' || input === 'S') {
+      openOverlay('sessions');
+    } else if (input === 'b' || input === 'B') {
+      openOverlay('budget');
+    }
+  }, { isActive: !state.overlayMode && state.phase !== 'transition' });
 
   if (state.phase === 'complete') {
     return (
@@ -68,12 +81,26 @@ export function App({ config }: AppProps) {
         budgetUsd={state.budgetUsd}
         contextPercent={state.contextPercent}
       />
-      <StreamView events={state.events} />
+      {state.overlayMode ? (
+        <LimitOverlay
+          type={state.overlayMode}
+          currentValue={state.overlayMode === 'sessions' ? state.maxSessions : state.budgetUsd}
+          sessionNum={state.sessionNum}
+          maxSessions={state.maxSessions}
+          onConfirm={state.overlayMode === 'sessions' ? updateMaxSessions : updateSessionBudget}
+          onCancel={closeOverlay}
+        />
+      ) : (
+        <StreamView events={state.events} />
+      )}
       <Footer
         knowledgeSize={state.knowledgeBytes}
         handoffsCompleted={state.handoffsCompleted}
         maxHandoffs={Math.max(0, state.maxSessions - 1)}
         runningAgents={state.runningAgents}
+        sessionNum={state.sessionNum}
+        maxSessions={state.maxSessions}
+        sessionBudget={state.budgetUsd}
       />
     </Box>
   );

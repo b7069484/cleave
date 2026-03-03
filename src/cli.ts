@@ -98,11 +98,22 @@ export function createCli() {
         process.exit(1);
       }
 
+      // Read persisted limits (from dynamic adjustment), CLI flags override
+      const persistedMaxSessions = await state.getMaxSessions();
+      const persistedSessionBudget = await state.getSessionBudget();
+
+      const cliSessions = parseInt(opts.sessions, 10);
+      const cliBudget = parseFloat(opts.budget);
+
+      // Use persisted value if CLI flag is the default (user didn't explicitly set it)
+      const defaultMax = DEFAULT_CONFIG.maxSessions!;
+      const defaultBudget = DEFAULT_CONFIG.sessionBudget!;
+
       const config: RelayConfig = {
         projectDir,
         initialTask: nextPrompt,
-        maxSessions: parseInt(opts.sessions, 10),
-        sessionBudget: parseFloat(opts.budget),
+        maxSessions: cliSessions !== defaultMax ? cliSessions : (persistedMaxSessions ?? defaultMax),
+        sessionBudget: cliBudget !== defaultBudget ? cliBudget : (persistedSessionBudget ?? defaultBudget),
         mode: opts.auto ? 'auto' : 'guided',
         model: opts.model,
         skipPermissions: opts.skipPermissions,
