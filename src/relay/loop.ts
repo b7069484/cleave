@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { SessionRunner, type SessionResult } from './session.js';
 import { CleaveState } from '../state/files.js';
 import { detectHandoff, generateRescueHandoff } from './handoff.js';
@@ -80,7 +80,7 @@ export class RelayLoop extends EventEmitter {
     let filesChanged: string[] = [];
     if (this.initialCommitHash) {
       try {
-        const diff = execSync(`git diff --name-only ${this.initialCommitHash}`, {
+        const diff = execFileSync('git', ['diff', '--name-only', this.initialCommitHash], {
           cwd: this.config.projectDir,
           encoding: 'utf-8',
         });

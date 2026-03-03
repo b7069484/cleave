@@ -61,7 +61,7 @@ You just completed a multi-session autonomous project. Write a detailed debrief 
 
 ## Raw Data
 
-- Sessions run: ${ctx.sessionsRun} sessions
+- Sessions run: ${ctx.sessionsRun} session${ctx.sessionsRun !== 1 ? 's' : ''}
 - Total cost: $${ctx.totalCostUsd.toFixed(2)}
 - Total duration: ${formatDuration(ctx.totalDurationMs)}
 

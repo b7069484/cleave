@@ -51,11 +51,15 @@ export class SessionRunner extends EventEmitter {
 
     // Capture remote control URL from stderr
     if (this.config.remoteControl) {
+      let urlCaptured = false;
       const stderrRl = createInterface({ input: this.child.stderr! });
       stderrRl.on('line', (line: string) => {
+        if (urlCaptured) return;
         const urlMatch = line.match(/https?:\/\/\S+/);
         if (urlMatch) {
+          urlCaptured = true;
           this.emit('remote_url', urlMatch[0]);
+          stderrRl.close();
         }
       });
     }

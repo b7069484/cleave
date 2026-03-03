@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { statSync, readFileSync, appendFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { RelayLoop } from '../relay/loop.js';
 import type { RelayConfig } from '../relay/config.js';
@@ -219,7 +219,7 @@ export function useRelay(config: RelayConfig) {
       }));
     });
 
-    loop.on('completion', () => {
+    loop.on('completion', ({ reason }: { reason: string }) => {
       // Read progress for display on the completion screen
       const progressFile = join(config.projectDir, '.cleave', 'PROGRESS.md');
       let progressSummary = '';
@@ -228,6 +228,7 @@ export function useRelay(config: RelayConfig) {
       setState(s => ({
         ...s,
         phase: 'complete',
+        completed: reason === 'task_complete',
         progressSummary,
       }));
     });

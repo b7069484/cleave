@@ -83,7 +83,7 @@ describe('buildDebriefPrompt', () => {
       projectDir: '/tmp/test',
     };
     const prompt = buildDebriefPrompt(ctx);
-    expect(prompt).toContain('1 sessions');
+    expect(prompt).toContain('1 session');
     expect(prompt).toContain('(none)');
     expect(prompt).toContain('(none detected)');
   });

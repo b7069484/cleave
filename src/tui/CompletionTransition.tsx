@@ -24,7 +24,17 @@ export function CompletionTransition({
   const [typing, setTyping] = useState(false);
 
   useInput(useCallback((input: string, key: { return?: boolean; backspace?: boolean; escape?: boolean }) => {
-    if (key.escape || (!typing && (input === 'q' || input === 'Q'))) {
+    if (key.escape) {
+      if (typing) {
+        setUserText('');
+        setTyping(false);
+      } else {
+        onQuit();
+      }
+      return;
+    }
+
+    if (!typing && (input === 'q' || input === 'Q')) {
       onQuit();
       return;
     }
@@ -43,8 +53,11 @@ export function CompletionTransition({
 
     if (key.backspace) {
       if (typing) {
-        setUserText(t => t.slice(0, -1));
-        if (userText.length <= 1) setTyping(false);
+        setUserText(t => {
+          const next = t.slice(0, -1);
+          if (next.length === 0) setTyping(false);
+          return next;
+        });
       }
       return;
     }
