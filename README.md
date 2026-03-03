@@ -59,10 +59,12 @@ The default for `cleave run`. Sessions auto-chain with a **10-second countdown**
 
 - **Type** to pause the countdown and inject instructions into the next session
 - **Press Enter** to send your instructions and continue
+- **Press S** to adjust the session limit on the fly
+- **Press B** to adjust the per-session budget on the fly
 - **Press Q** to quit the relay
 - **Wait** for the countdown to auto-advance
 
-This gives you a window to course-correct without requiring constant attention.
+This gives you a window to course-correct without requiring constant attention. The `S` and `B` hotkeys also work during active sessions — no need to wait for the transition.
 
 ### Mode 3: Auto (`cleave run "task" --auto`)
 
@@ -82,6 +84,7 @@ No TUI at all. Outputs session start/end markers to the console. Designed for CI
 | **Real-time TUI** | Yes | Yes | Yes | No |
 | **Pause between sessions** | 10s (guided) | 10s countdown | 3s countdown | None |
 | **Inject instructions** | Yes | Yes | No | No |
+| **Adjust limits mid-run** | Yes | Yes | Yes | No |
 | **Human attention needed** | At setup only | Optional | None | None |
 | **Best for** | First-time use, complex tasks | Most tasks | Trusted, well-defined tasks | CI/CD, remote servers |
 
@@ -159,6 +162,7 @@ Cleave's real-time terminal interface shows everything that matters:
 │ ▶ Running test suite (general-purpose) 45s                               │
 ┌───────────────────────────────────────────────────────────────────────────┐
 │ Knowledge: 4.2 KB                                    Handoffs: 2/14      │
+│ [s] Sessions: 3/15              [b] Budget: $5.00/session                │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -168,6 +172,7 @@ Cleave's real-time terminal interface shows everything that matters:
 - **Running agents** — background subagents with type and elapsed time
 - **Knowledge** — file size of KNOWLEDGE.md (grows across sessions)
 - **Handoffs** — successful handoff count (0/N, increments as sessions chain)
+- **Limit controls** — press `S` or `B` anytime to adjust session limit or budget on the fly
 
 ## Understanding Cost
 
@@ -221,7 +226,8 @@ src/
     ├── StartupApp.tsx   # Interactive setup wizard
     ├── Header.tsx       # Session info, context bar, cost
     ├── StreamView.tsx   # Live activity feed
-    ├── Footer.tsx       # Knowledge size, handoff counter, running agents
+    ├── Footer.tsx       # Knowledge size, handoff counter, limit controls
+    ├── LimitOverlay.tsx # Dynamic session/budget limit adjustment overlay
     ├── Transition.tsx   # Between-session countdown + input
     └── useRelay.ts      # React hook — connects TUI to RelayLoop
 ```
@@ -241,6 +247,7 @@ src/
 | Task clarification | No | No | No | No | No | **AI-powered** |
 | Rate limit resilience | No | Partial | No | Yes | No | **Yes** |
 | Mid-relay prompt injection | No | No | No | No | No | **Yes** |
+| Dynamic limit adjustment | No | No | No | No | No | **Yes** |
 | Crash recovery | No | No | Partial | No | No | **Yes** |
 | Full audit trail | No | No | Partial | No | No | **Yes** |
 
@@ -275,6 +282,8 @@ your-project/
     ├── .handoff_signal             # Handoff/completion signal
     ├── .session_count              # Current session number
     ├── .session_start              # Session start timestamp
+    ├── .max_sessions               # Persisted session limit (from dynamic adjustment)
+    ├── .session_budget             # Persisted budget limit (from dynamic adjustment)
     └── logs/
         ├── events.log              # TUI event log
         ├── session_1_progress.md   # Archived per-session files
