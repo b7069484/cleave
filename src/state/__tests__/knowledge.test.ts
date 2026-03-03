@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compactKnowledge } from '../knowledge.js';
+import { compactKnowledge, parseKnowledgeMetrics } from '../knowledge.js';
 
 describe('compactKnowledge', () => {
   it('preserves Core Knowledge section', () => {
@@ -33,5 +33,37 @@ describe('compactKnowledge', () => {
     expect(result).toContain('## Core Knowledge');
     expect(result).toContain('- Fact');
     expect(result).toContain('## Session Log');
+  });
+});
+
+describe('parseKnowledgeMetrics', () => {
+  it('counts bullet points under Core Knowledge as insights', () => {
+    const input = `## Core Knowledge\n- Fact one\n- Fact two\n- Fact three\n\n## Session Log\n### Session 1\n- Did stuff`;
+    const result = parseKnowledgeMetrics(input);
+    expect(result.insightCount).toBe(3);
+  });
+
+  it('measures core and session byte sizes separately', () => {
+    const core = '## Core Knowledge\n- Fact one\n- Fact two\n';
+    const session = '## Session Log\n### Session 1\n- Did stuff\n';
+    const input = core + '\n' + session;
+    const result = parseKnowledgeMetrics(input);
+    expect(result.coreSizeBytes).toBeGreaterThan(0);
+    expect(result.sessionSizeBytes).toBeGreaterThan(0);
+    expect(result.coreSizeBytes).toBeLessThan(Buffer.byteLength(input));
+  });
+
+  it('returns zeros for empty content', () => {
+    const result = parseKnowledgeMetrics('');
+    expect(result.insightCount).toBe(0);
+    expect(result.coreSizeBytes).toBe(0);
+    expect(result.sessionSizeBytes).toBe(0);
+  });
+
+  it('handles content with no Session Log section', () => {
+    const input = '## Core Knowledge\n- Fact one\n- Fact two';
+    const result = parseKnowledgeMetrics(input);
+    expect(result.insightCount).toBe(2);
+    expect(result.sessionSizeBytes).toBe(0);
   });
 });
