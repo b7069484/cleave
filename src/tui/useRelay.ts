@@ -7,7 +7,7 @@ import type { ParsedEvent } from '../stream/types.js';
 import type { LimitType } from './LimitOverlay.js';
 import { parseKnowledgeMetrics } from '../state/knowledge.js';
 
-export type RelayPhase = 'running' | 'transition' | 'complete' | 'done' | 'error';
+export type RelayPhase = 'running' | 'transition' | 'complete' | 'debrief' | 'done' | 'error';
 
 export interface RunningAgent {
   id: string;
@@ -230,6 +230,14 @@ export function useRelay(config: RelayConfig) {
         phase: 'complete',
         progressSummary,
       }));
+    });
+
+    loop.on('debrief_start', () => {
+      setState(s => ({ ...s, phase: 'debrief', events: [] }));
+    });
+
+    loop.on('debrief_end', () => {
+      // Don't set done here — loop.run().then() handles that
     });
 
     loop.run().then(result => {

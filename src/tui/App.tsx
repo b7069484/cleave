@@ -19,7 +19,7 @@ export function App({ config }: AppProps) {
   // Global hotkeys for s/b (only when no overlay is active and not in transition text input)
   useInput((input, key) => {
     if (state.overlayMode) return;
-    if (state.phase === 'complete' || state.phase === 'done' || state.phase === 'error') return;
+    if (state.phase === 'complete' || state.phase === 'debrief' || state.phase === 'done' || state.phase === 'error') return;
 
     if (input === 's' || input === 'S') {
       openOverlay('sessions');
@@ -56,6 +56,19 @@ export function App({ config }: AppProps) {
         onAddSessions={() => openOverlay('sessions')}
         onQuit={quitRelay}
       />
+    );
+  }
+
+  if (state.phase === 'debrief') {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Box borderStyle="double" borderColor="cyan" padding={1} flexDirection="column">
+          <Box justifyContent="center">
+            <Text bold color="cyan">Generating Debrief Report...</Text>
+          </Box>
+          <StreamView events={state.events} />
+        </Box>
+      </Box>
     );
   }
 

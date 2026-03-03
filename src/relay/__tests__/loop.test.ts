@@ -266,7 +266,7 @@ describe('RelayLoop', () => {
     });
 
     const result = await loop.run();
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(3); // 2 task sessions + 1 debrief session
     expect(completionCount).toBe(2);
   });
 
@@ -321,7 +321,7 @@ describe('RelayLoop', () => {
     });
 
     const result = await loop.run();
-    expect(callCount).toBe(4);
+    expect(callCount).toBe(5); // 4 task sessions + 1 debrief session
     expect(result.completed).toBe(true);
   });
 });

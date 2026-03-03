@@ -1,11 +1,13 @@
 import { EventEmitter } from 'node:events';
+import { execSync } from 'node:child_process';
 import { SessionRunner, type SessionResult } from './session.js';
 import { CleaveState } from '../state/files.js';
 import { detectHandoff, generateRescueHandoff } from './handoff.js';
 import { buildSessionPrompt, buildHandoffInstructions } from './prompt-builder.js';
 import { compactKnowledge } from '../state/knowledge.js';
+import { collectToolStats, buildDebriefPrompt, type DebriefContext } from './debrief.js';
 import type { RelayConfig } from './config.js';
-import type { ParsedEvent } from '../stream/types.js';
+import type { ParsedEvent, ParsedToolStart } from '../stream/types.js';
 
 export interface RelayResult {
   sessionsRun: number;
@@ -19,6 +21,9 @@ export class RelayLoop extends EventEmitter {
   private config: RelayConfig;
   private state: CleaveState;
   private transitionResolver: ((userInput?: string) => void) | null = null;
+  private allToolEvents: ParsedToolStart[] = [];
+  private sessionErrors: Array<{ sessionNum: number; message: string }> = [];
+  private initialCommitHash: string = '';
 
   constructor(config: RelayConfig) {
     super();
@@ -69,8 +74,65 @@ export class RelayLoop extends EventEmitter {
     });
   }
 
+  private async runDebrief(sessionsRun: number, totalCost: number, totalDuration: number): Promise<void> {
+    this.emit('debrief_start');
+
+    let filesChanged: string[] = [];
+    if (this.initialCommitHash) {
+      try {
+        const diff = execSync(`git diff --name-only ${this.initialCommitHash}`, {
+          cwd: this.config.projectDir,
+          encoding: 'utf-8',
+        });
+        filesChanged = diff.trim().split('\n').filter(Boolean);
+      } catch { /* ok */ }
+    }
+
+    const { tools, skills } = collectToolStats(this.allToolEvents);
+
+    const ctx: DebriefContext = {
+      sessionsRun,
+      totalCostUsd: totalCost,
+      totalDurationMs: totalDuration,
+      toolStats: tools,
+      skills,
+      filesChanged,
+      errors: this.sessionErrors,
+      finalProgress: await this.state.readProgress(),
+      finalKnowledge: await this.state.readKnowledge(),
+      projectDir: this.config.projectDir,
+    };
+
+    const debriefPrompt = buildDebriefPrompt(ctx);
+
+    const runner = new SessionRunner({
+      projectDir: this.config.projectDir,
+      prompt: debriefPrompt,
+      handoffInstructions: '',
+      budget: 1.0,
+      model: this.config.model,
+      skipPermissions: this.config.skipPermissions,
+    });
+
+    runner.on('event', (event: ParsedEvent) => {
+      this.emit('event', event);
+    });
+
+    try {
+      await runner.run();
+    } catch {
+      // Debrief failure is non-fatal
+    }
+
+    this.emit('debrief_end');
+  }
+
   async run(): Promise<RelayResult> {
     await this.state.init();
+
+    try {
+      this.initialCommitHash = execSync('git rev-parse HEAD', { cwd: this.config.projectDir, encoding: 'utf-8' }).trim();
+    } catch { /* not a git repo */ }
 
     let sessionsRun = 0;
     let totalCost = 0;
@@ -118,6 +180,9 @@ export class RelayLoop extends EventEmitter {
         // Forward events from session to relay
         runner.on('event', (event: ParsedEvent) => {
           this.emit('event', event);
+          if (event.kind === 'tool_start') {
+            this.allToolEvents.push(event as ParsedToolStart);
+          }
         });
 
         runner.on('remote_url', (url: string) => {
@@ -130,6 +195,7 @@ export class RelayLoop extends EventEmitter {
         try {
           sessionResult = await runner.run();
         } catch (err) {
+          this.sessionErrors.push({ sessionNum: i, message: String(err) });
           this.emit('session_error', { sessionNum: i, error: err });
           await generateRescueHandoff(this.state, i, this.config.initialTask);
 
@@ -179,6 +245,7 @@ export class RelayLoop extends EventEmitter {
           const userInput = await this.waitForTransition();
           if (!userInput) {
             // User chose to quit
+            await this.runDebrief(sessionsRun, totalCost, totalDuration);
             return {
               sessionsRun,
               completed: true,
@@ -243,6 +310,7 @@ export class RelayLoop extends EventEmitter {
       const userInput = await this.waitForTransition();
       if (!userInput) {
         // User chose to quit
+        await this.runDebrief(sessionsRun, totalCost, totalDuration);
         return {
           sessionsRun,
           completed: false,
