@@ -13,6 +13,7 @@ export interface SessionConfig {
   verbose?: boolean;
   skipPermissions?: boolean;
   allowedTools?: string[];
+  remoteControl?: boolean;
 }
 
 export interface SessionResult {
@@ -149,6 +150,10 @@ export class SessionRunner extends EventEmitter {
       for (const tool of this.config.allowedTools) {
         args.push('--allowedTools', tool);
       }
+    }
+
+    if (this.config.remoteControl) {
+      args.push('--remote-control');
     }
 
     return args;
