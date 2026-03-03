@@ -1,298 +1,289 @@
-# cleave
+# Cleave v6
 
 **Infinite context for Claude Code.**
 
-Claude Code is powerful but has a finite context window. When a task requires more context than one session can hold — processing hundreds of files, researching across dozens of topics, refactoring a large codebase — you hit a wall at ~70% context and have to manually restart with a new prompt.
+Cleave chains Claude Code sessions together with self-authored handoffs, compounding knowledge, and a real-time TUI. When one session runs low on context, it writes a briefing for the next one — lessons learned, dead ends mapped, exact resume points. Every session is smarter than the last.
 
-Cleave solves this by chaining sessions together automatically. Each session writes a handoff briefing for the next one. A fresh session reads it and picks up exactly where the last one left off. Your task runs to completion while you sleep.
+```
+cleave
+```
+
+That's it. The interactive wizard asks what you want done and starts the relay.
 
 ## How It Works
 
 ```
-┌─────────────┐     ┌─────────────────┐     ┌─────────────┐
-│  Session 1   │────▶│  NEXT_PROMPT.md  │────▶│  Session 2   │──▶ ...
-│              │     │  (written by     │     │              │
-│  Processes   │     │   Session 1)     │     │  Continues   │
-│  items 1-10  │     │                  │     │  items 11-20 │
-│              │     │  "Start from     │     │              │
-│  Writes      │     │   item 11.       │     │  Writes      │
-│  handoff at  │     │   X works well.  │     │  handoff at  │
-│  ~60% ctx    │     │   Avoid Y."      │     │  ~60% ctx    │
-└─────────────┘     └─────────────────┘     └─────────────┘
+Session 1                 Session 2                 Session N
+┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+│ Processes     │         │ Continues    │         │ Finishes     │
+│ items 1-12   │────────▶│ from item 13 │────────▶│ the job      │
+│              │ handoff │              │ handoff │              │
+│ Writes       │         │ Inherits all │         │ N sessions   │
+│ NEXT_PROMPT  │         │ knowledge    │         │ of wisdom    │
+└──────────────┘         └──────────────┘         └──────────────┘
+       │                        │                        │
+       ▼                        ▼                        ▼
+  KNOWLEDGE.md ──────── grows across all sessions ──────────▶
 ```
 
-1. You write an initial prompt describing your task
-2. Cleave launches Claude Code with your prompt + handoff instructions
-3. At ~60% context, Claude stops productive work and writes:
-   - `PROGRESS.md` — status and exact stop point
-   - `KNOWLEDGE.md` — promotes durable insights to Core, appends session notes
-   - `NEXT_PROMPT.md` — bespoke continuation prompt (written by Claude with full context)
-4. The handoff writing happens in the 60–70% buffer zone (structured output that tolerates mild quality decline)
-5. Cleave detects the exit, reads `NEXT_PROMPT.md`, launches a fresh session
-6. Repeats until the task is done or max sessions reached
+1. You describe a task (or the interactive wizard helps you define it)
+2. Cleave launches Claude Code in headless mode (`claude -p --output-format stream-json`)
+3. A real-time TUI shows context usage, cost, running agents, and knowledge growth
+4. At budget limit, Claude writes handoff files: `PROGRESS.md`, `KNOWLEDGE.md`, `NEXT_PROMPT.md`
+5. Cleave detects the handoff, archives the session, and launches a fresh one
+6. The new session inherits all accumulated knowledge and picks up exactly where the last left off
+7. Repeats until the task is done or max sessions reached
 
 **The key insight:** Claude writes its own continuation prompt. It knows what it did, what worked, what failed, and exactly where to resume. No human-authored bridging needed.
 
-## Three Editions
+## Four Modes
 
-Cleave comes in three editions. Same relay protocol, same `.cleave/` directory format, same handoff files. Pick the one that fits how you work.
+Cleave runs in four modes, from fully interactive to fully autonomous.
 
-| | Shell | Plugin | SDK |
-|:---|:---|:---|:---|
-| **Version** | v2 | v4.2 | v4.2 |
-| **What it is** | Single bash script | Claude Code native plugin | TypeScript npm package |
-| **Install** | `chmod +x cleave` | `./setup.sh` | `npm install -g cleave-sdk` |
-| **Handoff enforcement** | Instructions only | Stop hook (blocks exit) | Stop hook + async TypeScript |
-| **User interface** | Piped output | Full TUI + slash commands | TUI or headless |
-| **Slash commands** | — | `/handoff` `/status` `/resume` `/continue` | — |
-| **`continue` command** | — | `/continue` | `cleave continue "new task"` |
-| **Automated relay** | Built-in loop | Manual (`/resume`) or pair with SDK | Built-in loop |
-| **Agent definition** | — | Relay orchestrator agent | — |
-| **Best for** | Zero dependencies, fire-and-forget | Interactive use, manual control | Full automation, programmatic |
+### Mode 1: Interactive (`cleave` or `cleave start`)
 
-All three editions read and write the same `.cleave/` directory. You can start a task with the SDK, check on it with the Plugin's `/status`, and the files are interchangeable.
+A setup wizard that walks you through configuration:
 
-### Shell Edition
+1. **Project folder** — where to work
+2. **Task description** — what to build/fix/process
+3. **Clarifying questions** — Claude analyzes your task and asks 2-3 smart follow-up questions to refine it (Esc to skip)
+4. **Max sessions** — how many sessions to chain (default: 15)
+5. **Budget per session** — cost cap per session in USD equivalent (default: $5)
+6. **Session mode** — Guided (pause between sessions) or Auto (no pauses)
 
-Zero dependencies. One bash script. Drop it anywhere.
+Then it starts the relay with the TUI.
 
-```bash
-chmod +x cleave
-./cleave my_task.md
-```
+### Mode 2: Guided (`cleave run "task"`)
 
-Walk away. Come back when it's done. Supports max sessions, git commits, verification commands, rate limit handling, loop detection, desktop notifications. Everything in ~800 lines of bash.
+The default for `cleave run`. Sessions auto-chain with a **10-second countdown** between each one. During the countdown:
 
-```bash
-./cleave --max-sessions 20 -d ./my-project task.md          # Large job
-./cleave --git-commit --verify "pytest tests/ -x" task.md    # With safety nets
-./cleave --resume-from 5 my_task.md                          # Pick up from session 5
-```
+- **Type** to pause the countdown and inject instructions into the next session
+- **Press Enter** to send your instructions and continue
+- **Press Q** to quit the relay
+- **Wait** for the countdown to auto-advance
 
-### Plugin Edition
+This gives you a window to course-correct without requiring constant attention.
 
-Native Claude Code plugin with hooks, skills, and slash commands.
+### Mode 3: Auto (`cleave run "task" --auto`)
 
-```bash
-cd cleave-plugin-v4
-./setup.sh                    # Symlink to ~/.claude/plugins/cleave
-./setup.sh --install-hooks    # Also install hooks directly (recommended)
+Fully autonomous. Sessions chain with a 3-second countdown between each. No user input accepted. Best for well-defined tasks you trust to run unattended.
 
-claude --plugin cleave        # Start Claude with Cleave active
-```
+### Mode 4: Headless (`cleave run "task" --headless`)
 
-The plugin gives you:
-- **Stop hook** — blocks Claude from exiting until handoff files are written
-- **Session-relay skill** — auto-invoked handoff protocol with configurable thresholds
-- **Slash commands** — `/handoff` (force handoff), `/status` (dashboard), `/resume` (continue from handoff), `/continue` (new task, same knowledge)
-- **Relay orchestrator agent** — agent definition for automated mode
+No TUI at all. Outputs session start/end markers to the console. Designed for CI pipelines, background jobs, or remote servers where you don't need a visual interface.
 
-Use the plugin for interactive work where you want to see the TUI, use slash commands, and have hooks enforce the handoff. Pair with the SDK for automated relay or use `/resume` manually between sessions.
+### Mode Comparison
 
-### SDK Edition
+| | Interactive | Guided | Auto | Headless |
+|---|---|---|---|---|
+| **Command** | `cleave` | `cleave run "task"` | `cleave run "task" --auto` | `cleave run "task" --headless` |
+| **Setup wizard** | Yes | No | No | No |
+| **Task clarification** | AI-powered Q&A | No | No | No |
+| **Real-time TUI** | Yes | Yes | Yes | No |
+| **Pause between sessions** | 10s (guided) | 10s countdown | 3s countdown | None |
+| **Inject instructions** | Yes | Yes | No | No |
+| **Human attention needed** | At setup only | Optional | None | None |
+| **Best for** | First-time use, complex tasks | Most tasks | Trusted, well-defined tasks | CI/CD, remote servers |
 
-TypeScript package with full orchestration. Install from npm.
+## Installation
 
 ```bash
-npm install -g cleave-sdk
-
-cleave my-task.md                                    # TUI mode (default)
-cleave my-task.md --no-tui                           # Headless mode
-cleave my-task.md -m 20 --verify "npm test"          # With limits + verification
-cleave continue "Now add rate limiting" -d ./project  # Chain a new task
+npm install -g cleave
 ```
 
-The SDK provides:
-- **TUI mode** — spawns Claude with full interactive interface, hooks via generated settings JSON
-- **Headless mode** — uses the Agent SDK `query()` API for programmatic control
-- **`cleave continue`** — start a new task that builds on accumulated knowledge
-- **Crash recovery** — stops after 3 consecutive non-zero exits
-- **File locking** — PID-based mutex prevents concurrent runs
-- **Full TypeScript** — structured error handling, typed config, async hooks
-
-## Quick Start
-
-### 1. Write your initial prompt
-
-Create a file describing your task. Be specific about scope, file locations, and what "done" means.
-
-```markdown
-<!-- my_task.md -->
-You are refactoring a Python codebase from unittest to pytest.
-
-The codebase is in ./src/ and tests are in ./tests/.
-There are 847 test files that need to be converted.
-
-For each file:
-1. Replace unittest.TestCase classes with plain test functions
-2. Replace self.assertEqual with assert statements
-3. Replace setUp/tearDown with pytest fixtures
-4. Run the converted test to verify it passes
-
-Start from ./tests/test_auth/ and work alphabetically.
-```
-
-### 2. Run it
+Or run from source:
 
 ```bash
-# Shell
-./cleave my_task.md
-
-# Plugin (manual relay)
-claude --plugin cleave
-# then type /resume between sessions
-
-# SDK
-cleave my_task.md
+git clone https://github.com/b7069484/cleave.git
+cd cleave
+npm install && npm run build
+node dist/index.js
 ```
 
-### 3. Check progress
+**Requirements:**
+- Node.js 18+
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on your `PATH`
+
+## Usage
 
 ```bash
-cat .cleave/PROGRESS.md            # Current status
-cat .cleave/KNOWLEDGE.md           # Accumulated knowledge
-ls .cleave/logs/                   # Full session history
+# Interactive setup wizard (recommended for first run)
+cleave
+
+# Start a guided relay
+cleave run "Convert all unittest files to pytest in ./tests/"
+
+# Auto mode with custom settings
+cleave run "Refactor the auth system" --auto --sessions 20 --budget 8
+
+# Headless for CI
+cleave run "Run full security audit" --headless --sessions 10
+
+# Resume a previous relay
+cleave resume
+
+# Check relay status
+cleave status
 ```
 
-## The `.cleave/` Directory
+### Options
 
-All editions use the same directory structure.
+```
+cleave start              Interactive setup wizard (default command)
+cleave run <task>         Start relay with task description
+cleave resume             Resume from last handoff
+cleave status             Show relay status
+
+Options for 'run':
+  -s, --sessions <n>      Max sessions (default: 15)
+  -b, --budget <n>        Per-session budget in USD (default: 5)
+  -d, --dir <path>        Project directory (default: current dir)
+  -m, --model <model>     Model to use (e.g., sonnet, opus)
+  --auto                  Auto mode — no pause between sessions
+  --headless              Headless mode — no TUI
+  --skip-permissions      Skip Claude Code permission prompts
+  --allowed-tools <t...>  Tools to allow without prompting
+```
+
+## The TUI
+
+Cleave's real-time terminal interface shows everything that matters:
+
+```
+┌─ CLEAVE ─── Session 3/15 ─── ~/my-project ─── 4m 32s ────────────────────┐
+│ Context: ████████████░░░░░░░░ 58%     Session: $3.08/$5.00  Total: $9.24 │
+└───────────────────────────────────────────────────────────────────────────┘
+│ [stream of Claude's activity — tool calls, file edits, agent spawns]     │
+│ ...                                                                      │
+│ ▶ Researching auth patterns (Explore) 12s                                │
+│ ▶ Running test suite (general-purpose) 45s                               │
+┌───────────────────────────────────────────────────────────────────────────┐
+│ Knowledge: 4.2 KB                                    Handoffs: 2/14      │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Context bar** — real-time context window usage from Claude's token counts
+- **Cost** — session cost and cumulative total (see Cost section below)
+- **Stream** — live activity feed showing tool calls, text output, agent spawns
+- **Running agents** — background subagents with type and elapsed time
+- **Knowledge** — file size of KNOWLEDGE.md (grows across sessions)
+- **Handoffs** — successful handoff count (0/N, increments as sessions chain)
+
+## Understanding Cost
+
+The cost displayed in Cleave's TUI comes from Claude CLI's `result` event, which reports token usage at API rates.
+
+**If you're on a Claude Pro, Team, or Max subscription:** These numbers represent the *API-equivalent cost* of your usage — a proxy for how much subscription capacity you're consuming. **You are not charged these dollar amounts separately.** Your subscription covers the usage.
+
+**If you're using the Anthropic API directly:** The cost numbers reflect actual API charges.
+
+The `--budget` flag maps to Claude CLI's `--max-budget-usd`, which caps each session's token consumption to roughly that dollar equivalent. This works the same way on subscriptions — it limits how long a session runs, not what you pay.
+
+**Rule of thumb for subscription users:** Think of the budget as a session length control, not a billing control. A $5 budget gives a session roughly 15-25 minutes of heavy tool use on Opus.
+
+## Handoff Files
+
+Each session writes these files to `.cleave/`:
+
+| File | Purpose | Lifecycle |
+|------|---------|-----------|
+| `PROGRESS.md` | Status report — what's done, what's next, blockers | Overwritten each session |
+| `KNOWLEDGE.md` | Accumulated insights — architecture decisions, patterns, tips | Grows across all sessions |
+| `NEXT_PROMPT.md` | Complete briefing for the next session | Overwritten each session |
+| `.handoff_signal` | `HANDOFF_COMPLETE` or `TASK_FULLY_COMPLETE` | Signal file, cleared between sessions |
+
+**KNOWLEDGE.md** is the key to Cleave's compounding intelligence. It has two sections:
+- **Core Knowledge** — permanent insights (architecture decisions, key patterns, important file paths)
+- **Session Log** — per-session work summaries
+
+The knowledge file is compacted between sessions to stay within a reasonable size, keeping the most recent session logs and all core knowledge.
+
+## Architecture
+
+```
+src/
+├── cli.ts              # Commander CLI — 4 modes
+├── index.ts            # Entry point
+├── relay/
+│   ├── config.ts       # RelayConfig type + defaults
+│   ├── loop.ts         # RelayLoop — session chaining engine
+│   ├── session.ts      # SessionRunner — spawns claude -p
+│   ├── handoff.ts      # Handoff detection + rescue generation
+│   └── prompt-builder.ts # Builds session prompts + handoff instructions
+├── state/
+│   ├── files.ts        # CleaveState — file I/O for .cleave/
+│   └── knowledge.ts    # Knowledge compaction
+├── stream/
+│   ├── parser.ts       # StreamParser — NDJSON → typed events (stateful dedup)
+│   └── types.ts        # Event type definitions
+└── tui/
+    ├── App.tsx          # Main app — routes between phases
+    ├── StartupApp.tsx   # Interactive setup wizard
+    ├── Header.tsx       # Session info, context bar, cost
+    ├── StreamView.tsx   # Live activity feed
+    ├── Footer.tsx       # Knowledge size, handoff counter, running agents
+    ├── Transition.tsx   # Between-session countdown + input
+    └── useRelay.ts      # React hook — connects TUI to RelayLoop
+```
+
+## Comparison with Other Tools
+
+### vs. Other Session Continuity Tools
+
+| Capability | Manual | Ralph Wiggum | GSD | auto-resume | Session Memory | **Cleave v6** |
+|---|---|---|---|---|---|---|
+| No human in the loop | No | Yes | Yes | Yes | No | **Yes** |
+| Agent writes own handoff | No | No | No | No | Partial | **Yes** |
+| Knowledge compounds | No | No | Partial | No | Partial | **Yes** |
+| Fresh context each session | Yes | No | Yes | Partial | Yes | **Yes** |
+| Real-time TUI | No | No | No | No | No | **Yes** |
+| Multiple run modes | No | No | No | No | No | **4 modes** |
+| Task clarification | No | No | No | No | No | **AI-powered** |
+| Rate limit resilience | No | Partial | No | Yes | No | **Yes** |
+| Mid-relay prompt injection | No | No | No | No | No | **Yes** |
+| Crash recovery | No | No | Partial | No | No | **Yes** |
+| Full audit trail | No | No | Partial | No | No | **Yes** |
+
+### vs. Context Window Workarounds
+
+| Approach | How it works | Limitation | Cleave advantage |
+|---|---|---|---|
+| **Longer context windows** | Bigger model context | Quality degrades past 50% usage | Fresh context each session |
+| **Summarization** | Compress old context | Lossy — details lost | Full knowledge file preserved |
+| **RAG / embeddings** | Retrieve relevant chunks | Requires setup, misses connections | Agent decides what matters |
+| **Manual restart** | Human writes new prompt | Tedious, error-prone, doesn't scale | Fully automated handoffs |
+
+## Risks & Mitigations
+
+| Risk | Mitigation |
+|---|---|
+| **Cost accumulation** | Set `--sessions` and `--budget` caps. Start with 3-5 sessions to test. |
+| **Permission bypass** | `--skip-permissions` lets Claude run any command. Use git branches for safety. |
+| **Handoff quality varies** | Crash recovery falls back to initial prompt + PROGRESS + KNOWLEDGE. Check first 2-3 sessions. |
+| **Rate limits** | Cleave detects rate limits and continues. On free tiers, long runs may stall. |
+| **Agent goes off-track** | Check logs after first few sessions. Use guided mode to course-correct. |
+| **Knowledge file grows large** | Auto-compacted between sessions. Core knowledge preserved, old session logs trimmed. |
+
+## Files Created
 
 ```
 your-project/
-├── .cleave/
-│   ├── PROGRESS.md              # Current status (updated each session)
-│   ├── NEXT_PROMPT.md           # Continuation prompt (written by Claude)
-│   ├── KNOWLEDGE.md             # Core Knowledge (permanent) + Session Log (rolling)
-│   ├── status.json              # Machine-readable status
-│   ├── .active_relay            # Marker: relay in progress
-│   ├── .session_start           # Marker: current session start time
-│   ├── .session_counter         # Current session number
-│   └── logs/
-│       ├── relay.log            # Relay log
-│       ├── session_1_prompt.md
-│       ├── session_1_progress.md
-│       ├── session_1_next_prompt.md
-│       ├── session_1_knowledge.md
-│       └── ...
+└── .cleave/
+    ├── PROGRESS.md                 # Current status
+    ├── KNOWLEDGE.md                # Accumulated knowledge
+    ├── NEXT_PROMPT.md              # Next session's prompt
+    ├── .handoff_signal             # Handoff/completion signal
+    ├── .session_count              # Current session number
+    ├── .session_start              # Session start timestamp
+    └── logs/
+        ├── events.log              # TUI event log
+        ├── session_1_progress.md   # Archived per-session files
+        ├── session_1_knowledge.md
+        ├── session_1_next_prompt.md
+        └── ...
 ```
 
-## Key Concepts
-
-### Self-Authored Handoffs
-
-Each session writes `NEXT_PROMPT.md` — the exact prompt for the next session. This isn't a generic template. It's a bespoke briefing that includes where to resume, what worked, what failed, and accumulated context. Each session is smarter than the last.
-
-### Knowledge Accumulation
-
-`NEXT_PROMPT.md` gets replaced each session. `KNOWLEDGE.md` persists — but it's structured to prevent unbounded growth:
-
-- **`## Core Knowledge`** — Permanent insights every session needs (API configs, working search terms, critical discoveries). Claude is instructed to promote durable findings here. Never pruned.
-- **`## Session Log`** — Session-specific notes (`### Session N — [Date]` entries). Auto-pruned to the last 5 entries, preventing stale context from consuming the context window.
-
-Session 30 gets the permanent wisdom from session 1 (promoted to Core) without wading through 29 sessions of ephemeral notes.
-
-### Dual Context Threshold
-
-Cleave uses a two-phase approach based on research into context quality degradation:
-
-- **0–60%** — Productive work zone
-- **60%** — Stop productive work, begin handoff writing
-- **60–70%** — Handoff zone (structured output tolerates mild quality loss)
-- **70%+** — Danger zone, never reach this
-
-This gives each session ~20% more productive capacity than a single "bail at 50%" threshold.
-
-### Stop Hook Enforcement
-
-The Plugin and SDK editions enforce handoffs with a Stop hook. When Claude tries to exit, the hook checks whether all three handoff files were written this session. If not, it blocks the exit (exit code 2) and tells Claude what's missing. The Shell edition relies on instructions alone — Claude usually complies, but the hook is a safety net.
-
-### Rate Limit Handling
-
-If Claude exits due to a rate limit, the relay detects it, waits with a countdown timer, then retries the same session. No session is wasted on a rate limit exit.
-
-### Loop Detection
-
-If consecutive sessions write near-identical `NEXT_PROMPT.md` files (>85% similar lines), the relay warns you. After 3 consecutive loops, it stops to prevent wasting tokens on a stuck agent.
-
-### Verification Commands
-
-Don't trust the agent's self-assessment. Verify objectively:
-
-```bash
-cleave --verify "pytest ./tests/ -x" task.md            # Tests must pass
-cleave --verify "python check_outputs.py" task.md        # Custom check
-```
-
-If the command exits 0, the task is done — regardless of what Claude claims in PROGRESS.md.
-
-### Subagent Strategy
-
-For tasks with many independent items, Claude can spawn fresh subagents (`claude -p "..."`) for heavy subtasks. Each subagent gets a full 200K context window. The main session stays lean at ~15-30% context, extending effective capacity before handoff.
-
-## Writing Good Prompts
-
-The quality of the relay depends on Claude understanding the task well enough to write good handoffs:
-
-1. **Be specific about scope.** "Process all 200 CSV files in ./data/" beats "process the data."
-2. **Define what "done" means.** Claude needs to know when to write `ALL_COMPLETE`.
-3. **Describe the file structure.** Where inputs are, where outputs go, what tools exist.
-4. **Mention existing scripts.** List them with their functions so Claude doesn't rebuild them.
-5. **Set quality expectations.** "Try 3 search queries before marking as unfound" beats "search thoroughly."
-
-## Safety & Cost
-
-### Cost
-
-Each session uses API tokens. An Opus session can cost $5–15+. A 15-session relay could cost $75–225.
-- Always set `--max-sessions` to a reasonable cap
-- Start with 3–5 sessions to test before going to 15+
-
-### Branching Policy
-
-**Never push directly to `main`.** All changes go through pull requests:
-- Create a feature or fix branch (e.g., `fix/relay-exit`, `feat/pipeline-verify`)
-- Push to the branch and open a PR into `main`
-- Merge only when all tests pass and there are no conflicts
-- This applies to both human and AI-authored changes
-
-### Destructive Commands
-
-`--dangerously-skip-permissions` means Claude can run any command.
-- Use `--git-commit` so every session is checkpointed
-- Run in a feature branch, not on `main`
-
-### Agent Goes Off-Track
-
-- Loop detection catches identical handoffs
-- Check logs after the first 2–3 sessions
-- Kill the relay (Ctrl+C), review `.cleave/logs/`, fix the prompt, `--resume-from N`
-
-## .gitignore
-
-```
-.cleave/
-```
-
-## Comparisons
-
-| Tool | What it does | How Cleave differs |
-|------|-------------|-------------------|
-| **Manual restart** | You read output, write new prompt | Cleave automates this entirely |
-| **[claude-auto-resume](https://github.com/terryso/claude-auto-resume)** | Waits for rate limits, resumes | No context management or handoffs |
-| **[autonomous-skill](https://github.com/feiskyer/claude-code-settings)** | Task checklist with dual-agent loop | Same prompt each session, no knowledge accumulation |
-| **Claude Session Memory** | Passive recall across sessions | Not active task continuation |
-
-**We stand on the shoulders of giants.** Rate limit detection from `claude-auto-resume`. Knowledge accumulation philosophy from `claude-session-init`. Verification-first approach from Ralph Wiggum's "completion promise" pattern. Dual context threshold from GSD's context rot research. The key innovation: self-authored handoffs + persistent knowledge + enforced hooks.
-
-## Repository Structure
-
-```
-cleave/                  # Shell edition (v2) — single bash script
-cleave-plugin-v4/        # Plugin edition (v4.2) — Claude Code native plugin
-cleave-sdk/              # SDK edition (v4.2) — TypeScript npm package
-marketplace.json         # Plugin directory listing
-```
+Add `.cleave/` to your `.gitignore`.
 
 ## License
 

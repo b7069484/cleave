@@ -22,7 +22,7 @@ export function App({ config }: AppProps) {
             {state.completed ? 'TASK COMPLETE' : 'SESSION LIMIT REACHED'}
           </Text>
           <Text>Sessions run: {state.totalSessions}</Text>
-          <Text>Total cost: ${state.costUsd.toFixed(2)}</Text>
+          <Text>Total cost: ${state.totalCostUsd.toFixed(2)}</Text>
         </Box>
       </Box>
     );
@@ -45,11 +45,12 @@ export function App({ config }: AppProps) {
         sessionNum={state.sessionNum}
         maxSessions={state.maxSessions}
         contextPercent={state.contextPercent}
-        costUsd={state.costUsd}
+        costUsd={state.totalCostUsd}
         tasksCompleted={0}
         tasksTotal={0}
         knowledgePromoted={0}
         onComplete={advanceFromTransition}
+        mode={config.mode}
       />
     );
   }
@@ -62,16 +63,17 @@ export function App({ config }: AppProps) {
         maxSessions={state.maxSessions}
         projectDir={config.projectDir}
         elapsedMs={state.elapsedMs}
-        costUsd={state.costUsd}
+        sessionCostUsd={state.sessionCostUsd}
+        totalCostUsd={state.totalCostUsd}
         budgetUsd={state.budgetUsd}
         contextPercent={state.contextPercent}
       />
       <StreamView events={state.events} />
       <Footer
-        knowledgeSize={0}
-        tasksCompleted={0}
-        tasksTotal={0}
-        handoffStatus="waiting"
+        knowledgeSize={state.knowledgeBytes}
+        handoffsCompleted={state.handoffsCompleted}
+        maxHandoffs={Math.max(0, state.maxSessions - 1)}
+        runningAgents={state.runningAgents}
       />
     </Box>
   );

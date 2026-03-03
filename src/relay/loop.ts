@@ -18,11 +18,35 @@ export interface RelayResult {
 export class RelayLoop extends EventEmitter {
   private config: RelayConfig;
   private state: CleaveState;
+  private transitionResolver: ((userInput?: string) => void) | null = null;
 
   constructor(config: RelayConfig) {
     super();
     this.config = config;
     this.state = new CleaveState(config.projectDir);
+  }
+
+  /**
+   * Called by the TUI when the user advances from the transition screen.
+   * @param userInput Optional instructions to inject into the next session
+   */
+  resolveTransition(userInput?: string): void {
+    if (this.transitionResolver) {
+      this.transitionResolver(userInput);
+      this.transitionResolver = null;
+    }
+  }
+
+  private async waitForTransition(): Promise<string | undefined> {
+    if (this.config.mode === 'auto' || this.config.mode === 'headless') {
+      // Auto/headless: no pause, continue immediately
+      return undefined;
+    }
+
+    // Guided mode: wait for TUI to call resolveTransition
+    return new Promise<string | undefined>((resolve) => {
+      this.transitionResolver = resolve;
+    });
   }
 
   async run(): Promise<RelayResult> {
@@ -80,17 +104,21 @@ export class RelayLoop extends EventEmitter {
       } catch (err) {
         this.emit('session_error', { sessionNum: i, error: err });
         await generateRescueHandoff(this.state, i, this.config.initialTask);
+
+        // Emit transition and wait (in guided mode)
+        this.emit('transition', { sessionNum: i, type: 'rescue' });
+        const userInput = await this.waitForTransition();
+        if (userInput) {
+          const existing = await this.state.readNextPrompt();
+          await this.state.writeNextPrompt(
+            `## User Instructions\n${userInput}\n\n${existing}`
+          );
+        }
         continue;
       }
 
-      totalCost += sessionResult.costUsd;
+      totalCost += sessionResult.totalCostUsd || sessionResult.costUsd;
       totalDuration += sessionResult.durationMs;
-
-      this.emit('session_end', {
-        sessionNum: i,
-        result: sessionResult,
-        totalCost,
-      });
 
       // Archive session files
       await this.state.archiveSession(i);
@@ -99,6 +127,7 @@ export class RelayLoop extends EventEmitter {
       const handoff = await detectHandoff(this.state);
 
       if (handoff === 'complete') {
+        this.emit('session_end', { sessionNum: i, result: sessionResult, totalCost });
         return {
           sessionsRun,
           completed: true,
@@ -108,14 +137,27 @@ export class RelayLoop extends EventEmitter {
         };
       }
 
-      if (handoff === 'handoff') {
-        // Chain to next session
-        continue;
-      }
+      if (handoff === 'handoff' || handoff === null) {
+        if (handoff === null) {
+          // No handoff signal — generate rescue
+          this.emit('rescue', { sessionNum: i });
+          await generateRescueHandoff(this.state, i, this.config.initialTask);
+        }
 
-      // No handoff signal — generate rescue
-      this.emit('rescue', { sessionNum: i });
-      await generateRescueHandoff(this.state, i, this.config.initialTask);
+        // Don't emit transition for the last session
+        if (i < this.config.maxSessions) {
+          this.emit('session_end', { sessionNum: i, result: sessionResult, totalCost });
+
+          // Wait for transition (guided mode pauses here)
+          const userInput = await this.waitForTransition();
+          if (userInput) {
+            const existing = await this.state.readNextPrompt();
+            await this.state.writeNextPrompt(
+              `## User Instructions\n${userInput}\n\n${existing}`
+            );
+          }
+        }
+      }
     }
 
     return {

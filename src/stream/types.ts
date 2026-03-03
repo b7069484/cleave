@@ -18,6 +18,12 @@ export interface AssistantEvent {
   type: 'assistant';
   message: {
     content: ContentBlock[];
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
   };
 }
 
@@ -54,6 +60,20 @@ export interface ResultEvent {
   duration_ms?: number;
   session_id?: string;
   num_turns?: number;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+  modelUsage?: Record<string, {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadInputTokens?: number;
+    cacheCreationInputTokens?: number;
+    costUSD?: number;
+    contextWindow?: number;
+  }>;
 }
 
 export interface RateLimitEvent {
@@ -116,6 +136,9 @@ export interface ParsedResult {
   durationMs: number;
   numTurns: number;
   sessionId: string;
+  inputTokens: number;
+  outputTokens: number;
+  contextWindow: number;
 }
 
 export interface ParsedError {
@@ -136,6 +159,12 @@ export interface ParsedSystem {
   exitCode?: number;
 }
 
+export interface ParsedUsage {
+  kind: 'usage';
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export type ParsedEvent =
   | ParsedTextChunk
   | ParsedToolStart
@@ -143,4 +172,5 @@ export type ParsedEvent =
   | ParsedResult
   | ParsedError
   | ParsedRateLimit
-  | ParsedSystem;
+  | ParsedSystem
+  | ParsedUsage;

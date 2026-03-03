@@ -25,9 +25,10 @@ export function StreamView({ events }: StreamViewProps) {
                 </Box>
               );
             case 'rate_limit':
+              if (!event.blocked) return null;  // Skip warnings, only show actual blocks
               return (
-                <Box key={event.key} borderStyle="round" borderColor="yellow" paddingX={1}>
-                  <Text color="yellow" bold>Rate limited</Text>
+                <Box key={event.key} borderStyle="round" borderColor="red" paddingX={1}>
+                  <Text color="red" bold>Rate limited</Text>
                   <Text dimColor> — resets at {new Date(event.resetsAt).toLocaleTimeString()}</Text>
                 </Box>
               );

@@ -51,6 +51,7 @@ describe('RelayLoop', () => {
       initialTask: 'Simple task',
       maxSessions: 10,
       sessionBudget: 5,
+      mode: 'auto',
       maxSessionLogEntries: 5,
     });
 
@@ -90,6 +91,7 @@ describe('RelayLoop', () => {
       initialTask: 'Big task',
       maxSessions: 10,
       sessionBudget: 5,
+      mode: 'auto',
       maxSessionLogEntries: 5,
     });
 
@@ -122,6 +124,7 @@ describe('RelayLoop', () => {
       initialTask: 'Endless task',
       maxSessions: 3,
       sessionBudget: 5,
+      mode: 'auto',
       maxSessionLogEntries: 5,
     });
 

@@ -1,20 +1,33 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { statSync, appendFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { RelayLoop } from '../relay/loop.js';
 import type { RelayConfig } from '../relay/config.js';
 import type { ParsedEvent } from '../stream/types.js';
 
 export type RelayPhase = 'running' | 'transition' | 'complete' | 'error';
 
+export interface RunningAgent {
+  id: string;
+  description: string;
+  type: string;
+  startedAt: number;
+}
+
 export interface RelayState {
   phase: RelayPhase;
   sessionNum: number;
   maxSessions: number;
   events: ParsedEvent[];
-  costUsd: number;
-  budgetUsd: number;
+  sessionCostUsd: number;   // Cost for current session only
+  totalCostUsd: number;     // Cumulative cost across all sessions
+  budgetUsd: number;        // Per-session budget
   contextPercent: number;
   elapsedMs: number;
   toolCount: number;
+  knowledgeBytes: number;
+  handoffsCompleted: number; // Successful handoffs (increments when new session starts)
+  runningAgents: RunningAgent[];
   error?: string;
   completed: boolean;
   totalSessions: number;
@@ -26,76 +39,171 @@ export function useRelay(config: RelayConfig) {
     sessionNum: 1,
     maxSessions: config.maxSessions,
     events: [],
-    costUsd: 0,
+    sessionCostUsd: 0,
+    totalCostUsd: 0,
     budgetUsd: config.sessionBudget,
     contextPercent: 0,
     elapsedMs: 0,
     toolCount: 0,
+    knowledgeBytes: 0,
+    handoffsCompleted: 0,
+    runningAgents: [],
     completed: false,
     totalSessions: 0,
   });
 
   const startTimeRef = useRef(Date.now());
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const cumulativeCostRef = useRef(0);  // Track cost across sessions
+  const loopRef = useRef<RelayLoop | null>(null);
 
   useEffect(() => {
-    // Elapsed time ticker
+    // Set up event log file
+    const logDir = join(config.projectDir, '.cleave', 'logs');
+    try { mkdirSync(logDir, { recursive: true }); } catch { /* exists */ }
+    const logFile = join(logDir, 'events.log');
+
+    function logEvent(label: string, data: unknown) {
+      try {
+        appendFileSync(logFile, `[${new Date().toISOString()}] ${label}: ${JSON.stringify(data)}\n`);
+      } catch { /* ignore logging errors */ }
+    }
+
+    // Elapsed time ticker + knowledge file poll
+    const kPath = join(config.projectDir, '.cleave', 'KNOWLEDGE.md');
     timerRef.current = setInterval(() => {
-      setState(s => ({ ...s, elapsedMs: Date.now() - startTimeRef.current }));
+      let knowledgeBytes: number | undefined;
+      try { knowledgeBytes = statSync(kPath).size; } catch { /* not created yet */ }
+      setState(s => ({
+        ...s,
+        elapsedMs: Date.now() - startTimeRef.current,
+        ...(knowledgeBytes !== undefined ? { knowledgeBytes } : {}),
+      }));
     }, 1000);
 
     const loop = new RelayLoop(config);
+    loopRef.current = loop;
 
     loop.on('session_start', ({ sessionNum, maxSessions }: { sessionNum: number; maxSessions: number }) => {
       startTimeRef.current = Date.now();
+      logEvent('session_start', { sessionNum, maxSessions });
+
+      // Read knowledge size at session start
+      let knowledgeBytes = 0;
+      try {
+        knowledgeBytes = statSync(kPath).size;
+      } catch { /* not created yet */ }
+
       setState(s => ({
         ...s,
         phase: 'running',
         sessionNum,
         maxSessions,
         events: [],
-        costUsd: 0,
+        sessionCostUsd: 0,
+        totalCostUsd: cumulativeCostRef.current,
         contextPercent: 0,
         toolCount: 0,
+        knowledgeBytes,
+        // Session 2+ starting means a handoff succeeded
+        handoffsCompleted: sessionNum > 1 ? sessionNum - 1 : 0,
+        runningAgents: [],
       }));
     });
 
     loop.on('event', (event: ParsedEvent) => {
+      // Log non-text events for debugging (text events are too noisy)
+      if (event.kind !== 'text') {
+        logEvent('event', event);
+      }
+
       setState(s => {
         const newState = { ...s, events: [...s.events, event] };
+
         if (event.kind === 'tool_start') {
           newState.toolCount = s.toolCount + 1;
+
+          // Track Agent tool calls as running background agents
+          if (event.name === 'Agent') {
+            const agent: RunningAgent = {
+              id: event.id,
+              description: String((event.input as Record<string, unknown>).description ?? 'agent'),
+              type: String((event.input as Record<string, unknown>).subagent_type ?? 'unknown'),
+              startedAt: Date.now(),
+            };
+            newState.runningAgents = [...s.runningAgents, agent];
+          }
         }
+
+        if (event.kind === 'tool_end') {
+          // Remove completed agent from running list
+          if (s.runningAgents.some(a => a.id === event.id)) {
+            newState.runningAgents = s.runningAgents.filter(a => a.id !== event.id);
+          }
+        }
+
+        if (event.kind === 'usage') {
+          const totalTokens = event.inputTokens + event.outputTokens;
+          newState.contextPercent = Math.min(99, Math.round((totalTokens / 200_000) * 100));
+          // Estimate cost from tokens (Opus pricing: $15/M input, $75/M output)
+          const estimatedCost = (event.inputTokens * 15 + event.outputTokens * 75) / 1_000_000;
+          newState.sessionCostUsd = estimatedCost;
+          newState.totalCostUsd = cumulativeCostRef.current + estimatedCost;
+        }
+
         if (event.kind === 'result') {
-          newState.costUsd = event.costUsd;
-          // Estimate context from cost ratio (cost/budget ≈ context usage)
-          newState.contextPercent = Math.min(99, Math.round((event.costUsd / config.sessionBudget) * 100));
+          // Result event is authoritative — use its cost and compute context %
+          newState.sessionCostUsd = event.totalCostUsd;
+          cumulativeCostRef.current += event.totalCostUsd;
+          newState.totalCostUsd = cumulativeCostRef.current;
+
+          // Use result event's token counts for context % (most accurate)
+          if (event.inputTokens > 0 || event.outputTokens > 0) {
+            const totalTokens = event.inputTokens + event.outputTokens;
+            const ctxWindow = event.contextWindow || 200_000;
+            newState.contextPercent = Math.min(99, Math.round((totalTokens / ctxWindow) * 100));
+          }
         }
+
         return newState;
       });
     });
 
     loop.on('session_end', ({ sessionNum }: { sessionNum: number; result: any; totalCost: number }) => {
+      logEvent('session_end', { sessionNum });
       setState(s => ({
         ...s,
         phase: 'transition',
         totalSessions: sessionNum,
       }));
+
+      // In auto/headless mode, resolve transition immediately
+      if (config.mode === 'auto' || config.mode === 'headless') {
+        loop.resolveTransition();
+      }
     });
 
-    loop.on('rescue', () => {
+    loop.on('rescue', ({ sessionNum }: { sessionNum: number }) => {
+      logEvent('rescue', { sessionNum });
       setState(s => ({ ...s, phase: 'transition' }));
+
+      if (config.mode === 'auto' || config.mode === 'headless') {
+        loop.resolveTransition();
+      }
     });
 
     loop.run().then(result => {
+      logEvent('relay_complete', result);
       setState(s => ({
         ...s,
         phase: 'complete',
         completed: result.completed,
         totalSessions: result.sessionsRun,
+        totalCostUsd: result.totalCostUsd || cumulativeCostRef.current,
       }));
       clearInterval(timerRef.current);
     }).catch(err => {
+      logEvent('relay_error', { error: String(err) });
       setState(s => ({ ...s, phase: 'error', error: String(err) }));
       clearInterval(timerRef.current);
     });
@@ -103,8 +211,10 @@ export function useRelay(config: RelayConfig) {
     return () => clearInterval(timerRef.current);
   }, []);
 
-  const advanceFromTransition = useCallback(() => {
+  const advanceFromTransition = useCallback((userInput?: string) => {
     setState(s => ({ ...s, phase: 'running' }));
+    // Signal the relay loop to continue (may inject user input into next prompt)
+    loopRef.current?.resolveTransition(userInput);
   }, []);
 
   return { state, advanceFromTransition };

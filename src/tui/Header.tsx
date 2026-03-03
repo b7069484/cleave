@@ -7,7 +7,8 @@ interface HeaderProps {
   maxSessions: number;
   projectDir: string;
   elapsedMs: number;
-  costUsd: number;
+  sessionCostUsd: number;
+  totalCostUsd: number;
   budgetUsd: number;
   contextPercent: number;
 }
@@ -30,7 +31,8 @@ export function Header({
   maxSessions,
   projectDir,
   elapsedMs,
-  costUsd,
+  sessionCostUsd,
+  totalCostUsd,
   budgetUsd,
   contextPercent,
 }: HeaderProps) {
@@ -51,9 +53,10 @@ export function Header({
           <Text bold>{contextPercent}%</Text>
         </Text>
         <Text>
-          Budget: <Text bold color={costUsd > budgetUsd * 0.8 ? 'yellow' : 'green'}>
-            ${costUsd.toFixed(2)}
+          Session: <Text bold color={sessionCostUsd > budgetUsd * 0.8 ? 'yellow' : 'green'}>
+            ${sessionCostUsd.toFixed(2)}
           </Text>/${budgetUsd.toFixed(2)}
+          {' '}Total: <Text bold>${totalCostUsd.toFixed(2)}</Text>
         </Text>
       </Box>
     </Box>

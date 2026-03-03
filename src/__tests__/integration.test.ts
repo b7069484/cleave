@@ -82,6 +82,7 @@ describe('Integration: Relay chains sessions correctly', () => {
       initialTask: 'Build the feature',
       maxSessions: 5,
       sessionBudget: 5,
+      mode: 'auto',
       maxSessionLogEntries: 5,
     });
 

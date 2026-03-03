@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
-import { parseStreamLine } from '../stream/parser.js';
+import { StreamParser } from '../stream/parser.js';
 import type { ParsedEvent } from '../stream/types.js';
 
 export interface SessionConfig {
@@ -64,13 +64,14 @@ export class SessionRunner extends EventEmitter {
       sessionId: '',
     };
 
-    // Process stdout as NDJSON
+    // Process stdout as NDJSON with stateful parser for deduplication
+    const parser = new StreamParser();
     const rl = createInterface({ input: this.child.stdout! });
 
     for await (const line of rl) {
       if (!line.trim()) continue;
 
-      const events = parseStreamLine(line);
+      const events = parser.parseLine(line);
       for (const event of events) {
         this.emit('event', event);
 
@@ -95,7 +96,9 @@ export class SessionRunner extends EventEmitter {
             }
             break;
           case 'error':
-            this.emit('error', new Error(event.message));
+            // Don't emit EventEmitter 'error' — that throws if unhandled
+            // and kills the session on non-fatal stream errors.
+            // The error ParsedEvent is already forwarded via 'event' emission above.
             break;
         }
       }
