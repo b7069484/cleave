@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { statSync, appendFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { RelayLoop } from '../relay/loop.js';
 import type { RelayConfig } from '../relay/config.js';
 import type { ParsedEvent } from '../stream/types.js';
 import type { LimitType } from './LimitOverlay.js';
+import { parseKnowledgeMetrics } from '../state/knowledge.js';
 
-export type RelayPhase = 'running' | 'transition' | 'complete' | 'error';
+export type RelayPhase = 'running' | 'transition' | 'complete' | 'debrief' | 'done' | 'error';
 
 export interface RunningAgent {
   id: string;
@@ -26,9 +27,11 @@ export interface RelayState {
   contextPercent: number;
   elapsedMs: number;
   toolCount: number;
-  knowledgeBytes: number;
+  knowledge: { insights: number; coreBytes: number; sessionBytes: number };
   handoffsCompleted: number; // Successful handoffs (increments when new session starts)
+  remoteUrl: string;
   runningAgents: RunningAgent[];
+  progressSummary: string;
   error?: string;
   completed: boolean;
   totalSessions: number;
@@ -47,9 +50,11 @@ export function useRelay(config: RelayConfig) {
     contextPercent: 0,
     elapsedMs: 0,
     toolCount: 0,
-    knowledgeBytes: 0,
+    knowledge: { insights: 0, coreBytes: 0, sessionBytes: 0 },
     handoffsCompleted: 0,
+    remoteUrl: '',
     runningAgents: [],
+    progressSummary: '',
     completed: false,
     totalSessions: 0,
     overlayMode: null,
@@ -75,12 +80,16 @@ export function useRelay(config: RelayConfig) {
     // Elapsed time ticker + knowledge file poll
     const kPath = join(config.projectDir, '.cleave', 'KNOWLEDGE.md');
     timerRef.current = setInterval(() => {
-      let knowledgeBytes: number | undefined;
-      try { knowledgeBytes = statSync(kPath).size; } catch { /* not created yet */ }
+      let knowledge: { insights: number; coreBytes: number; sessionBytes: number } | undefined;
+      try {
+        const content = readFileSync(kPath, 'utf-8');
+        const metrics = parseKnowledgeMetrics(content);
+        knowledge = { insights: metrics.insightCount, coreBytes: metrics.coreSizeBytes, sessionBytes: metrics.sessionSizeBytes };
+      } catch { /* not created yet */ }
       setState(s => ({
         ...s,
         elapsedMs: Date.now() - startTimeRef.current,
-        ...(knowledgeBytes !== undefined ? { knowledgeBytes } : {}),
+        ...(knowledge !== undefined ? { knowledge } : {}),
       }));
     }, 1000);
 
@@ -91,10 +100,12 @@ export function useRelay(config: RelayConfig) {
       startTimeRef.current = Date.now();
       logEvent('session_start', { sessionNum, maxSessions });
 
-      // Read knowledge size at session start
-      let knowledgeBytes = 0;
+      // Read knowledge metrics at session start
+      let knowledge = { insights: 0, coreBytes: 0, sessionBytes: 0 };
       try {
-        knowledgeBytes = statSync(kPath).size;
+        const content = readFileSync(kPath, 'utf-8');
+        const metrics = parseKnowledgeMetrics(content);
+        knowledge = { insights: metrics.insightCount, coreBytes: metrics.coreSizeBytes, sessionBytes: metrics.sessionSizeBytes };
       } catch { /* not created yet */ }
 
       setState(s => ({
@@ -107,9 +118,10 @@ export function useRelay(config: RelayConfig) {
         totalCostUsd: cumulativeCostRef.current,
         contextPercent: 0,
         toolCount: 0,
-        knowledgeBytes,
+        knowledge,
         // Session 2+ starting means a handoff succeeded
         handoffsCompleted: sessionNum > 1 ? sessionNum - 1 : 0,
+        remoteUrl: '',
         runningAgents: [],
       }));
     });
@@ -195,6 +207,10 @@ export function useRelay(config: RelayConfig) {
       }
     });
 
+    loop.on('remote_url', (url: string) => {
+      setState(s => ({ ...s, remoteUrl: url }));
+    });
+
     loop.on('config_change', ({ maxSessions, sessionBudget }: { maxSessions: number; sessionBudget: number }) => {
       setState(s => ({
         ...s,
@@ -203,11 +219,33 @@ export function useRelay(config: RelayConfig) {
       }));
     });
 
+    loop.on('completion', ({ reason }: { reason: string }) => {
+      // Read progress for display on the completion screen
+      const progressFile = join(config.projectDir, '.cleave', 'PROGRESS.md');
+      let progressSummary = '';
+      try { progressSummary = readFileSync(progressFile, 'utf-8'); } catch { /* ok */ }
+
+      setState(s => ({
+        ...s,
+        phase: 'complete',
+        completed: reason === 'task_complete',
+        progressSummary,
+      }));
+    });
+
+    loop.on('debrief_start', () => {
+      setState(s => ({ ...s, phase: 'debrief', events: [] }));
+    });
+
+    loop.on('debrief_end', () => {
+      // Don't set done here — loop.run().then() handles that
+    });
+
     loop.run().then(result => {
       logEvent('relay_complete', result);
       setState(s => ({
         ...s,
-        phase: 'complete',
+        phase: 'done',
         completed: result.completed,
         totalSessions: result.sessionsRun,
         totalCostUsd: result.totalCostUsd || cumulativeCostRef.current,
@@ -246,5 +284,9 @@ export function useRelay(config: RelayConfig) {
     setState(s => ({ ...s, overlayMode: null }));
   }, []);
 
-  return { state, advanceFromTransition, openOverlay, closeOverlay, updateMaxSessions, updateSessionBudget };
+  const quitRelay = useCallback(() => {
+    loopRef.current?.resolveTransition(undefined);
+  }, []);
+
+  return { state, advanceFromTransition, openOverlay, closeOverlay, updateMaxSessions, updateSessionBudget, quitRelay };
 }

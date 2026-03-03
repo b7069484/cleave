@@ -6,7 +6,7 @@ import { App } from './App.js';
 import type { RelayConfig, CleaveMode } from '../relay/config.js';
 import { DEFAULT_CONFIG } from '../relay/config.js';
 
-type SetupStep = 'dir' | 'task' | 'clarify_loading' | 'clarify_ask' | 'sessions' | 'budget' | 'mode' | 'confirm';
+type SetupStep = 'dir' | 'task' | 'clarify_loading' | 'clarify_ask' | 'sessions' | 'budget' | 'mode' | 'remote' | 'confirm';
 
 interface ClarifyQuestion {
   question: string;
@@ -77,6 +77,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
   const [sessions, setSessions] = useState(String(DEFAULT_CONFIG.maxSessions));
   const [budget, setBudget] = useState(String(DEFAULT_CONFIG.sessionBudget));
   const [mode, setMode] = useState<CleaveMode>('guided');
+  const [remoteControl, setRemoteControl] = useState(false);
   const [started, setStarted] = useState(false);
 
   // Clarification state
@@ -152,6 +153,9 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       case 'mode':
         // Mode is selected via 1/2 keys, Enter confirms current selection
         setInput('');
+        setStep('remote');
+        break;
+      case 'remote':
         setStep('confirm');
         break;
       case 'confirm':
@@ -189,6 +193,13 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       return;
     }
 
+    if (step === 'remote') {
+      if (ch === '1') { setRemoteControl(true); return; }
+      if (ch === '2') { setRemoteControl(false); return; }
+      if (key.tab) { setRemoteControl(r => !r); return; }
+      return;
+    }
+
     if (key.backspace) {
       setInput(v => v.slice(0, -1));
       return;
@@ -216,6 +227,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       maxSessions: parseInt(sessions, 10) || DEFAULT_CONFIG.maxSessions!,
       sessionBudget: parseFloat(budget) || DEFAULT_CONFIG.sessionBudget!,
       mode,
+      remoteControl,
       skipPermissions: true,
       maxSessionLogEntries: DEFAULT_CONFIG.maxSessionLogEntries!,
     };
@@ -224,7 +236,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
 
   // Helper to check if a step is past
   const isPast = (s: SetupStep) => {
-    const order: SetupStep[] = ['dir', 'task', 'clarify_loading', 'clarify_ask', 'sessions', 'budget', 'mode', 'confirm'];
+    const order: SetupStep[] = ['dir', 'task', 'clarify_loading', 'clarify_ask', 'sessions', 'budget', 'mode', 'remote', 'confirm'];
     return order.indexOf(s) < order.indexOf(step);
   };
 
@@ -305,7 +317,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       )}
 
       {/* Sessions */}
-      {(step === 'sessions' || step === 'budget' || step === 'mode' || step === 'confirm') && (
+      {(step === 'sessions' || step === 'budget' || step === 'mode' || step === 'remote' || step === 'confirm') && (
         <Box>
           <Text color={step === 'sessions' ? 'cyan' : 'green'}>
             {step === 'sessions' ? '>' : '\u2713'} Max sessions:{' '}
@@ -319,7 +331,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       )}
 
       {/* Budget */}
-      {(step === 'budget' || step === 'mode' || step === 'confirm') && (
+      {(step === 'budget' || step === 'mode' || step === 'remote' || step === 'confirm') && (
         <Box>
           <Text color={step === 'budget' ? 'cyan' : 'green'}>
             {step === 'budget' ? '>' : '\u2713'} Budget per session ($):{' '}
@@ -333,7 +345,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       )}
 
       {/* Mode Selection */}
-      {(step === 'mode' || step === 'confirm') && (
+      {(step === 'mode' || step === 'remote' || step === 'confirm') && (
         <Box flexDirection="column">
           <Text color={step === 'mode' ? 'cyan' : 'green'}>
             {step === 'mode' ? '>' : '\u2713'} Session mode:{' '}
@@ -346,6 +358,27 @@ export function StartupApp({ initialDir }: StartupAppProps) {
               </Text>
               <Text color={mode === 'auto' ? 'cyan' : 'gray'}>
                 {mode === 'auto' ? '\u25B6' : ' '} [2] Auto — no pauses, fully autonomous
+              </Text>
+              <Text dimColor>  Press 1, 2, or Tab to switch. Enter to confirm.</Text>
+            </Box>
+          )}
+        </Box>
+      )}
+
+      {/* Remote Control */}
+      {(step === 'remote' || step === 'confirm') && (
+        <Box flexDirection="column">
+          <Text color={step === 'remote' ? 'cyan' : 'green'}>
+            {step === 'remote' ? '>' : '\u2713'} Remote control:{' '}
+            {step !== 'remote' && <Text bold>{remoteControl ? 'Enabled (browser access)' : 'Disabled'}</Text>}
+          </Text>
+          {step === 'remote' && (
+            <Box flexDirection="column" marginLeft={4}>
+              <Text color={remoteControl ? 'cyan' : 'gray'}>
+                {remoteControl ? '\u25B6' : ' '} [1] Yes — provide browser URL for mobile/remote access
+              </Text>
+              <Text color={!remoteControl ? 'cyan' : 'gray'}>
+                {!remoteControl ? '\u25B6' : ' '} [2] No — terminal only
               </Text>
               <Text dimColor>  Press 1, 2, or Tab to switch. Enter to confirm.</Text>
             </Box>

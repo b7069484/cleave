@@ -13,6 +13,7 @@ export interface SessionConfig {
   verbose?: boolean;
   skipPermissions?: boolean;
   allowedTools?: string[];
+  remoteControl?: boolean;
 }
 
 export interface SessionResult {
@@ -47,6 +48,21 @@ export class SessionRunner extends EventEmitter {
       cwd: this.config.projectDir,
       env,
     });
+
+    // Capture remote control URL from stderr
+    if (this.config.remoteControl) {
+      let urlCaptured = false;
+      const stderrRl = createInterface({ input: this.child.stderr! });
+      stderrRl.on('line', (line: string) => {
+        if (urlCaptured) return;
+        const urlMatch = line.match(/https?:\/\/\S+/);
+        if (urlMatch) {
+          urlCaptured = true;
+          this.emit('remote_url', urlMatch[0]);
+          stderrRl.close();
+        }
+      });
+    }
 
     // Send prompt via stdin
     this.child.stdin!.write(this.config.prompt);
@@ -149,6 +165,10 @@ export class SessionRunner extends EventEmitter {
       for (const tool of this.config.allowedTools) {
         args.push('--allowedTools', tool);
       }
+    }
+
+    if (this.config.remoteControl) {
+      args.push('--remote-control');
     }
 
     return args;

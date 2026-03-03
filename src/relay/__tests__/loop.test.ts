@@ -220,4 +220,108 @@ describe('RelayLoop', () => {
     expect(budgets[1]).toBe(10);
     expect(budgets[2]).toBe(10);
   });
+
+  it('emits completion event and continues when user provides follow-up (guided mode)', async () => {
+    const state = new CleaveState(tmpDir);
+    await state.init();
+    let callCount = 0;
+
+    (SessionRunner as any).mockImplementation(function (this: any) {
+      this.on = vi.fn();
+      this.run = vi.fn(async () => {
+        callCount++;
+        if (callCount === 1) {
+          await state.writeHandoffSignal('TASK_FULLY_COMPLETE');
+          await state.writeProgress('## STATUS: ALL_COMPLETE\nDone');
+        } else {
+          await state.writeHandoffSignal('TASK_FULLY_COMPLETE');
+          await state.writeProgress('## STATUS: ALL_COMPLETE\nFollow-up done');
+        }
+        return {
+          exitCode: 0, costUsd: 1.0, totalCostUsd: 1.0,
+          durationMs: 10000, numTurns: 3, toolUseCount: 5,
+          fullText: '', rateLimited: false, sessionId: `s${callCount}`,
+        };
+      });
+    });
+
+    const loop = new RelayLoop({
+      projectDir: tmpDir,
+      initialTask: 'Initial task',
+      maxSessions: 5,
+      sessionBudget: 5,
+      mode: 'guided',
+      maxSessionLogEntries: 5,
+    });
+
+    let completionCount = 0;
+    loop.on('completion', () => {
+      completionCount++;
+      if (completionCount === 1) {
+        // Defer so waitForTransition() has time to set up the resolver
+        setImmediate(() => loop.resolveTransition('Do the follow-up work'));
+      } else {
+        setImmediate(() => loop.resolveTransition(undefined)); // quit
+      }
+    });
+
+    const result = await loop.run();
+    expect(callCount).toBe(3); // 2 task sessions + 1 debrief session
+    expect(completionCount).toBe(2);
+  });
+
+  it('emits completion on max sessions and continues when user adds sessions (guided mode)', async () => {
+    const state = new CleaveState(tmpDir);
+    await state.init();
+    let callCount = 0;
+
+    (SessionRunner as any).mockImplementation(function (this: any) {
+      this.on = vi.fn();
+      this.run = vi.fn(async () => {
+        callCount++;
+        if (callCount < 4) {
+          await state.writeHandoffSignal('HANDOFF_COMPLETE');
+          await state.writeNextPrompt('Continue');
+          await state.writeProgress('## STATUS: IN_PROGRESS');
+          await state.writeKnowledge('## Core Knowledge\n\n## Session Log\n');
+        } else {
+          await state.writeHandoffSignal('TASK_FULLY_COMPLETE');
+          await state.writeProgress('## STATUS: ALL_COMPLETE');
+        }
+        return {
+          exitCode: 0, costUsd: 1.0, totalCostUsd: 1.0,
+          durationMs: 10000, numTurns: 3, toolUseCount: 5,
+          fullText: '', rateLimited: false, sessionId: `s${callCount}`,
+        };
+      });
+    });
+
+    const loop = new RelayLoop({
+      projectDir: tmpDir,
+      initialTask: 'Task',
+      maxSessions: 2,
+      sessionBudget: 5,
+      mode: 'guided',
+      maxSessionLogEntries: 5,
+    });
+
+    loop.on('completion', ({ reason }: { reason: string }) => {
+      if (reason === 'max_sessions' && callCount === 2) {
+        setImmediate(() => {
+          loop.updateMaxSessions(5);
+          loop.resolveTransition('Continue the work');
+        });
+      } else {
+        setImmediate(() => loop.resolveTransition(undefined)); // quit on task_complete
+      }
+    });
+
+    loop.on('session_end', () => {
+      setImmediate(() => loop.resolveTransition());
+    });
+
+    const result = await loop.run();
+    expect(callCount).toBe(5); // 4 task sessions + 1 debrief session
+    expect(result.completed).toBe(true);
+  });
 });

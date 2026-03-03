@@ -50,6 +50,7 @@ A setup wizard that walks you through configuration:
 4. **Max sessions** — how many sessions to chain (default: 15)
 5. **Budget per session** — cost cap per session in USD equivalent (default: $5)
 6. **Session mode** — Guided (pause between sessions) or Auto (no pauses)
+7. **Remote control** — optionally enable browser access via Claude Code's remote control (provides a URL you can open on your phone or another device to monitor and intervene)
 
 Then it starts the relay with the TUI.
 
@@ -61,10 +62,12 @@ The default for `cleave run`. Sessions auto-chain with a **10-second countdown**
 - **Press Enter** to send your instructions and continue
 - **Press S** to adjust the session limit on the fly
 - **Press B** to adjust the per-session budget on the fly
-- **Press Q** to quit the relay
+- **Press Q** to quit the relay (generates a debrief report)
 - **Wait** for the countdown to auto-advance
 
 This gives you a window to course-correct without requiring constant attention. The `S` and `B` hotkeys also work during active sessions — no need to wait for the transition.
+
+**Post-completion continuation:** When the task completes or you hit the session limit, you're not locked out. The completion screen lets you type follow-up instructions (e.g., "now add tests for those chapters") to continue in a new session, press `S` to add more sessions, or press `Q` to quit and generate a debrief report.
 
 ### Mode 3: Auto (`cleave run "task" --auto`)
 
@@ -161,7 +164,7 @@ Cleave's real-time terminal interface shows everything that matters:
 │ ▶ Researching auth patterns (Explore) 12s                                │
 │ ▶ Running test suite (general-purpose) 45s                               │
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ Knowledge: 4.2 KB                                    Handoffs: 2/14      │
+│ Knowledge: 8 insights · 1.4 KB core / 0.9 KB session  Handoffs: 2/14      │
 │ [s] Sessions: 3/15              [b] Budget: $5.00/session                │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
@@ -170,7 +173,8 @@ Cleave's real-time terminal interface shows everything that matters:
 - **Cost** — session cost and cumulative total (see Cost section below)
 - **Stream** — live activity feed showing tool calls, text output, agent spawns
 - **Running agents** — background subagents with type and elapsed time
-- **Knowledge** — file size of KNOWLEDGE.md (grows across sessions)
+- **Knowledge** — insight count (permanent discoveries) plus core/session KB breakdown
+- **Remote** — when remote control is enabled, shows the browser URL for the current session
 - **Handoffs** — successful handoff count (0/N, increments as sessions chain)
 - **Limit controls** — press `S` or `B` anytime to adjust session limit or budget on the fly
 
@@ -214,7 +218,8 @@ src/
 │   ├── loop.ts         # RelayLoop — session chaining engine
 │   ├── session.ts      # SessionRunner — spawns claude -p
 │   ├── handoff.ts      # Handoff detection + rescue generation
-│   └── prompt-builder.ts # Builds session prompts + handoff instructions
+│   ├── prompt-builder.ts # Builds session prompts + handoff instructions
+│   └── debrief.ts      # Debrief report data collection + prompt builder
 ├── state/
 │   ├── files.ts        # CleaveState — file I/O for .cleave/
 │   └── knowledge.ts    # Knowledge compaction
@@ -222,14 +227,15 @@ src/
 │   ├── parser.ts       # StreamParser — NDJSON → typed events (stateful dedup)
 │   └── types.ts        # Event type definitions
 └── tui/
-    ├── App.tsx          # Main app — routes between phases
-    ├── StartupApp.tsx   # Interactive setup wizard
-    ├── Header.tsx       # Session info, context bar, cost
-    ├── StreamView.tsx   # Live activity feed
-    ├── Footer.tsx       # Knowledge size, handoff counter, limit controls
-    ├── LimitOverlay.tsx # Dynamic session/budget limit adjustment overlay
-    ├── Transition.tsx   # Between-session countdown + input
-    └── useRelay.ts      # React hook — connects TUI to RelayLoop
+    ├── App.tsx                # Main app — routes between phases
+    ├── StartupApp.tsx         # Interactive setup wizard
+    ├── Header.tsx             # Session info, context bar, cost, remote URL
+    ├── StreamView.tsx         # Live activity feed
+    ├── Footer.tsx             # Knowledge metrics, handoff counter, limit controls
+    ├── CompletionTransition.tsx # Post-completion screen (follow-up, add sessions, quit)
+    ├── LimitOverlay.tsx       # Dynamic session/budget limit adjustment overlay
+    ├── Transition.tsx         # Between-session countdown + input
+    └── useRelay.ts            # React hook — connects TUI to RelayLoop
 ```
 
 ## Comparison with Other Tools
@@ -284,6 +290,7 @@ your-project/
     ├── .session_start              # Session start timestamp
     ├── .max_sessions               # Persisted session limit (from dynamic adjustment)
     ├── .session_budget             # Persisted budget limit (from dynamic adjustment)
+    ├── DEBRIEF.md                  # Post-run debrief report (generated on quit)
     └── logs/
         ├── events.log              # TUI event log
         ├── session_1_progress.md   # Archived per-session files

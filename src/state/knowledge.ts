@@ -1,3 +1,36 @@
+export interface KnowledgeMetrics {
+  insightCount: number;
+  coreSizeBytes: number;
+  sessionSizeBytes: number;
+}
+
+export function parseKnowledgeMetrics(content: string): KnowledgeMetrics {
+  if (!content.trim()) {
+    return { insightCount: 0, coreSizeBytes: 0, sessionSizeBytes: 0 };
+  }
+
+  const sessionLogIndex = content.indexOf('## Session Log');
+
+  let coreSection: string;
+  let sessionSection: string;
+
+  if (sessionLogIndex === -1) {
+    coreSection = content;
+    sessionSection = '';
+  } else {
+    coreSection = content.slice(0, sessionLogIndex);
+    sessionSection = content.slice(sessionLogIndex);
+  }
+
+  const insightCount = (coreSection.match(/^- .+/gm) ?? []).length;
+
+  return {
+    insightCount,
+    coreSizeBytes: Buffer.byteLength(coreSection, 'utf-8'),
+    sessionSizeBytes: Buffer.byteLength(sessionSection, 'utf-8'),
+  };
+}
+
 export function compactKnowledge(content: string, maxSessions: number): string {
   if (!content.trim()) {
     return '## Core Knowledge\n\n## Session Log\n';

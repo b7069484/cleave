@@ -11,6 +11,7 @@ export interface RelayConfig {
   skipPermissions?: boolean;
   allowedTools?: string[];
   maxSessionLogEntries: number;
+  remoteControl?: boolean;
 }
 
 export const DEFAULT_CONFIG: Partial<RelayConfig> = {
@@ -18,4 +19,5 @@ export const DEFAULT_CONFIG: Partial<RelayConfig> = {
   sessionBudget: 5,
   mode: 'guided',
   maxSessionLogEntries: 5,
+  remoteControl: false,
 };

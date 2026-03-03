@@ -4,3 +4,5 @@ dist/
 .planning/
 *.tgz
 .DS_Store
+docs/plans/
+promo/
