@@ -211,6 +211,16 @@ export function useRelay(config: RelayConfig) {
       setState(s => ({ ...s, remoteUrl: url }));
     });
 
+    loop.on('session_error', ({ sessionNum, error }: { sessionNum: number; error: unknown }) => {
+      logEvent('session_error', { sessionNum, error: String(error) });
+    });
+
+    loop.on('fatal_error', ({ message }: { message: string }) => {
+      logEvent('fatal_error', { message });
+      setState(s => ({ ...s, phase: 'error', error: message }));
+      clearInterval(timerRef.current);
+    });
+
     loop.on('config_change', ({ maxSessions, sessionBudget }: { maxSessions: number; sessionBudget: number }) => {
       setState(s => ({
         ...s,

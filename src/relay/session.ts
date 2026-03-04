@@ -27,6 +27,7 @@ export interface SessionResult {
   rateLimited: boolean;
   rateLimitResetAt?: number;
   sessionId: string;
+  stderr: string;
 }
 
 export class SessionRunner extends EventEmitter {
@@ -39,6 +40,7 @@ export class SessionRunner extends EventEmitter {
   }
 
   async run(): Promise<SessionResult> {
+    const startTime = Date.now();
     const args = this.buildArgs();
     const env = { ...process.env };
     delete env.CLAUDECODE;  // Prevent nested session detection
@@ -49,20 +51,19 @@ export class SessionRunner extends EventEmitter {
       env,
     });
 
-    // Capture remote control URL from stderr
-    if (this.config.remoteControl) {
-      let urlCaptured = false;
-      const stderrRl = createInterface({ input: this.child.stderr! });
-      stderrRl.on('line', (line: string) => {
-        if (urlCaptured) return;
+    // Always capture stderr
+    let stderrOutput = '';
+    const stderrRl = createInterface({ input: this.child.stderr! });
+    stderrRl.on('line', (line: string) => {
+      stderrOutput += line + '\n';
+      // Capture remote control URL if enabled
+      if (this.config.remoteControl) {
         const urlMatch = line.match(/https?:\/\/\S+/);
         if (urlMatch) {
-          urlCaptured = true;
           this.emit('remote_url', urlMatch[0]);
-          stderrRl.close();
         }
-      });
-    }
+      }
+    });
 
     // Send prompt via stdin
     this.child.stdin!.write(this.config.prompt);
@@ -78,6 +79,7 @@ export class SessionRunner extends EventEmitter {
       fullText: '',
       rateLimited: false,
       sessionId: '',
+      stderr: '',
     };
 
     // Process stdout as NDJSON with stateful parser for deduplication
@@ -130,6 +132,15 @@ export class SessionRunner extends EventEmitter {
     });
 
     result.exitCode = exitCode;
+    result.stderr = stderrOutput.trim();
+
+    // Detect empty sessions — if Claude exited instantly with no work done, throw with stderr
+    const wallTimeMs = Date.now() - startTime;
+    if (result.numTurns === 0 && result.toolUseCount === 0 && wallTimeMs < 10_000) {
+      const errorMsg = result.stderr || `Session exited in ${wallTimeMs}ms with no output (exit code ${exitCode})`;
+      throw new Error(`Claude session failed to start: ${errorMsg}`);
+    }
+
     return result;
   }
 
