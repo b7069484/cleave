@@ -72,7 +72,7 @@ describe('SessionRunner', () => {
     const lines = [
       JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Part 1 ' } }),
       JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Part 2' } }),
-      JSON.stringify({ type: 'result', total_cost_usd: 0.5 }),
+      JSON.stringify({ type: 'result', total_cost_usd: 0.5, num_turns: 1 }),
     ];
     (spawn as any).mockReturnValue(createMockProcess(lines));
 
@@ -97,7 +97,7 @@ describe('SessionRunner', () => {
         type: 'assistant',
         message: { content: [{ type: 'text', text: 'Hello' }] }
       }),
-      JSON.stringify({ type: 'result', total_cost_usd: 0.1 }),
+      JSON.stringify({ type: 'result', total_cost_usd: 0.1, num_turns: 1 }),
     ];
     (spawn as any).mockReturnValue(createMockProcess(lines));
 
@@ -155,7 +155,7 @@ describe('SessionRunner', () => {
           usage: { input_tokens: 5000, output_tokens: 100, cache_creation_input_tokens: 20000 }
         }
       }),
-      JSON.stringify({ type: 'result', total_cost_usd: 0.15 }),
+      JSON.stringify({ type: 'result', total_cost_usd: 0.15, num_turns: 1 }),
     ];
     (spawn as any).mockReturnValue(createMockProcess(lines));
 
@@ -212,7 +212,7 @@ describe('SessionRunner', () => {
         type: 'assistant',
         message: { content: [{ type: 'text', text: 'Working... Continuing...' }] }
       }),
-      JSON.stringify({ type: 'result', total_cost_usd: 1.0 }),
+      JSON.stringify({ type: 'result', total_cost_usd: 1.0, num_turns: 1 }),
     ];
     (spawn as any).mockReturnValue(createMockProcess(lines));
 
