@@ -11,10 +11,22 @@ You are in an autonomous relay session managed by Cleave. You have a SESSION BUD
 
 ### KNOWLEDGE.md — Create EARLY, update often
 **Create .cleave/KNOWLEDGE.md within your first few tool calls.** Don't wait until handoff. Two sections:
-- \`## Core Knowledge\` — Permanent insights (architecture decisions, key patterns found, important file paths). Append new discoveries as you find them.
+- \`## Core Knowledge\` — Permanent insights as a **NUMBERED LIST** (1. , 2. , 3. , etc.). Architecture decisions, key patterns, important file paths. **ONLY append new numbered items. NEVER restructure, consolidate, remove, renumber, or add sub-headers within this section.**
 - \`## Session Log\` — This session's work summary under \`### Session N\`. Update as you make progress.
 
-Every time you discover something important (a key file path, an architecture pattern, a gotcha), append it to KNOWLEDGE.md immediately. This file is how wisdom compounds across sessions.
+Every time you discover something important, append the next numbered item to Core Knowledge immediately. Example:
+\`\`\`
+## Core Knowledge
+1. Main entry point is src/index.ts
+2. Tests use vitest, run with npx vitest run
+3. Database is PostgreSQL with Prisma ORM
+\`\`\`
+
+**RULES:**
+- Core Knowledge items are NUMBERED (1. 2. 3.), NEVER bullets (-)
+- NEVER delete, merge, or rewrite existing numbered items
+- NEVER add headings (###) inside Core Knowledge
+- ONLY add new items at the END with the next number
 
 ### Handoff files (write ALL of these to .cleave/ before budget runs out):
 
