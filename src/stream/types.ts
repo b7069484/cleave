@@ -101,6 +101,17 @@ export interface SystemEvent {
   session_id?: string;
 }
 
+export interface StreamEventWrapper {
+  type: 'stream_event';
+  event: {
+    type: string;
+    [key: string]: unknown;
+  };
+  session_id?: string;
+  parent_tool_use_id?: string | null;
+  uuid?: string;
+}
+
 export type StreamEvent =
   | AssistantEvent
   | ContentBlockStartEvent
@@ -109,7 +120,8 @@ export type StreamEvent =
   | ResultEvent
   | RateLimitEvent
   | ErrorEvent
-  | SystemEvent;
+  | SystemEvent
+  | StreamEventWrapper;
 
 // Parsed high-level events for the TUI
 export interface ParsedTextChunk {

@@ -10,7 +10,7 @@ export function createCli() {
   const program = new Command()
     .name('cleave')
     .description('Infinite context for Claude Code — autonomous session relay with real-time TUI')
-    .version('6.1.0');
+    .version('6.2.1');
 
   // Default command: interactive startup wizard
   program

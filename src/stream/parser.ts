@@ -89,6 +89,17 @@ export class StreamParser {
           exitCode: event.exit_code,
         }];
 
+      case 'stream_event': {
+        // Claude CLI v2.1.66+ wraps streaming events in {"type":"stream_event","event":{...}}
+        const inner = (event as any).event;
+        if (inner && typeof inner === 'object' && inner.type) {
+          // Re-parse the inner event by treating it as a top-level event
+          const innerLine = JSON.stringify(inner);
+          return this.parseLine(innerLine);
+        }
+        return [];
+      }
+
       default:
         return [];
     }
