@@ -43,7 +43,7 @@ export interface ContentBlockDeltaEvent {
   delta: {
     type: 'text_delta' | 'input_json_delta';
     text?: string;
-    partial_json?: string;
+    partial_json?: string;  // input_json_delta fragments for tool_use blocks
   };
 }
 
