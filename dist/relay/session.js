@@ -19,12 +19,16 @@ export class SessionRunner extends EventEmitter {
             cwd: this.config.projectDir,
             env,
         });
+        if (!this.child?.stdin || !this.child?.stdout || !this.child?.stderr) {
+            throw new Error('Failed to create process streams — is Claude CLI installed?');
+        }
         // Always capture stderr
         let stderrOutput = '';
         const stderrRl = createInterface({ input: this.child.stderr });
         stderrRl.on('line', (line) => {
             stderrOutput += line + '\n';
         });
+        stderrRl.on('error', () => { });
         // Send prompt via stdin
         this.child.stdin.write(this.config.prompt);
         this.child.stdin.end();
@@ -43,6 +47,7 @@ export class SessionRunner extends EventEmitter {
         // Process stdout as NDJSON with stateful parser for deduplication
         const parser = new StreamParser();
         const rl = createInterface({ input: this.child.stdout });
+        rl.on('error', () => { });
         for await (const line of rl) {
             if (!line.trim())
                 continue;
@@ -77,6 +82,7 @@ export class SessionRunner extends EventEmitter {
                 }
             }
         }
+        stderrRl.close();
         // Wait for process to close
         const exitCode = await new Promise((resolve) => {
             if (this.child.exitCode !== null) {

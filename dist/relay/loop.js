@@ -10,6 +10,7 @@ export class RelayLoop extends EventEmitter {
     config;
     state;
     transitionResolver = null;
+    queuedTransitionInput = null; // null = no queued value
     allToolEvents = [];
     sessionErrors = [];
     consecutiveFailures = 0;
@@ -27,6 +28,10 @@ export class RelayLoop extends EventEmitter {
         if (this.transitionResolver) {
             this.transitionResolver(userInput);
             this.transitionResolver = null;
+        }
+        else {
+            // Queue for the next waitForTransition call
+            this.queuedTransitionInput = userInput ?? undefined;
         }
     }
     /**
@@ -49,10 +54,14 @@ export class RelayLoop extends EventEmitter {
     }
     async waitForTransition() {
         if (this.config.mode === 'auto' || this.config.mode === 'headless') {
-            // Auto/headless: no pause, continue immediately
             return undefined;
         }
-        // Guided mode: wait for TUI to call resolveTransition
+        // Check if a value was queued before we started waiting
+        if (this.queuedTransitionInput !== null) {
+            const val = this.queuedTransitionInput;
+            this.queuedTransitionInput = null;
+            return val;
+        }
         return new Promise((resolve) => {
             this.transitionResolver = resolve;
         });
@@ -189,6 +198,14 @@ export class RelayLoop extends EventEmitter {
                 }
                 totalCost += sessionResult.totalCostUsd || sessionResult.costUsd;
                 totalDuration += sessionResult.durationMs;
+                // Wait if rate-limited before starting next session
+                if (sessionResult.rateLimited && sessionResult.rateLimitResetAt) {
+                    const waitMs = sessionResult.rateLimitResetAt - Date.now();
+                    if (waitMs > 0 && waitMs < 600_000) { // Cap at 10 minutes
+                        this.emit('rate_limit_wait', { resetAt: sessionResult.rateLimitResetAt });
+                        await new Promise(r => setTimeout(r, waitMs));
+                    }
+                }
                 // Archive session files
                 await this.state.archiveSession(i);
                 // Check for handoff
