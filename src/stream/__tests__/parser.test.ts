@@ -132,6 +132,59 @@ describe('parseStreamLine (stateless)', () => {
       exitCode: undefined,
     }]);
   });
+
+  it('unwraps stream_event envelopes for content_block_delta', () => {
+    const line = JSON.stringify({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'Hello from wrapped event' },
+      },
+      session_id: 'sess_123',
+    });
+    const events = parseStreamLine(line);
+    expect(events).toEqual([{ kind: 'text', text: 'Hello from wrapped event' }]);
+  });
+
+  it('unwraps stream_event envelopes for content_block_start tool_use', () => {
+    const line = JSON.stringify({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'tool_use', name: 'Bash', id: 'tool_42' },
+      },
+      session_id: 'sess_123',
+    });
+    const events = parseStreamLine(line);
+    expect(events).toEqual([{
+      kind: 'tool_start',
+      name: 'Bash',
+      id: 'tool_42',
+      input: {},
+    }]);
+  });
+
+  it('unwraps stream_event envelopes for content_block_stop', () => {
+    const line = JSON.stringify({
+      type: 'stream_event',
+      event: { type: 'content_block_stop', index: 0 },
+      session_id: 'sess_123',
+    });
+    const events = parseStreamLine(line);
+    expect(events).toEqual([{ kind: 'tool_end', id: 'block_0' }]);
+  });
+
+  it('ignores stream_event with message_start (no useful data)', () => {
+    const line = JSON.stringify({
+      type: 'stream_event',
+      event: { type: 'message_start', message: { model: 'claude-opus-4-6' } },
+    });
+    const events = parseStreamLine(line);
+    // message_start is not a type the parser handles — returns empty
+    expect(events).toEqual([]);
+  });
 });
 
 describe('StreamParser (stateful deduplication)', () => {
@@ -189,6 +242,23 @@ describe('StreamParser (stateful deduplication)', () => {
       type: 'content_block_delta',
       index: 0,
       delta: { type: 'text_delta', text: 'Hello' }
+    }));
+
+    // Then assistant snapshot includes the same text — should not re-emit
+    const events = parser.parseLine(JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Hello' }] }
+    }));
+    expect(events.filter(e => e.kind === 'text')).toHaveLength(0);
+  });
+
+  it('deduplicates between wrapped stream_event deltas and assistant snapshots', () => {
+    const parser = new StreamParser();
+
+    // Text arrives via wrapped content_block_delta
+    parser.parseLine(JSON.stringify({
+      type: 'stream_event',
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello' } },
     }));
 
     // Then assistant snapshot includes the same text — should not re-emit
