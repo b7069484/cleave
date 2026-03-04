@@ -23,6 +23,7 @@ export class RelayLoop extends EventEmitter {
   private transitionResolver: ((userInput?: string) => void) | null = null;
   private allToolEvents: ParsedToolStart[] = [];
   private sessionErrors: Array<{ sessionNum: number; message: string }> = [];
+  private consecutiveFailures: number = 0;
   private initialCommitHash: string = '';
 
   constructor(config: RelayConfig) {
@@ -194,9 +195,26 @@ export class RelayLoop extends EventEmitter {
         let sessionResult: SessionResult;
         try {
           sessionResult = await runner.run();
+          this.consecutiveFailures = 0;  // Reset on success
         } catch (err) {
+          this.consecutiveFailures++;
           this.sessionErrors.push({ sessionNum: i, message: String(err) });
           this.emit('session_error', { sessionNum: i, error: err });
+
+          // Abort relay after 2 consecutive failures — something is fundamentally wrong
+          if (this.consecutiveFailures >= 2) {
+            this.emit('fatal_error', {
+              message: `Relay aborted: ${this.consecutiveFailures} consecutive session failures. Last error: ${String(err)}`,
+            });
+            return {
+              sessionsRun,
+              completed: false,
+              reason: 'error',
+              totalCostUsd: totalCost,
+              totalDurationMs: totalDuration,
+            };
+          }
+
           await generateRescueHandoff(this.state, i, this.config.initialTask);
 
           // Emit transition and wait (in guided mode)
