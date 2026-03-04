@@ -68,7 +68,7 @@ export function Transition({
       return;
     }
 
-    if (key.backspace) {
+    if (key.backspace || input === '\x7f') {
       if (!paused && userText.length === 0) return;
       setPaused(true);
       setUserText(t => t.slice(0, -1));

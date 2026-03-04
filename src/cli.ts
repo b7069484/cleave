@@ -6,11 +6,20 @@ import { App } from './tui/App.js';
 import type { RelayConfig, CleaveMode } from './relay/config.js';
 import { DEFAULT_CONFIG } from './relay/config.js';
 
+/**
+ * Push cursor to bottom of terminal before rendering TUI.
+ * This makes the TUI start at the bottom and scroll upward (like Claude Code).
+ */
+function anchorToBottom(): void {
+  const rows = process.stdout.rows || 24;
+  process.stdout.write('\n'.repeat(rows));
+}
+
 export function createCli() {
   const program = new Command()
     .name('cleave')
     .description('Infinite context for Claude Code — autonomous session relay with real-time TUI')
-    .version('6.2.2');
+    .version('6.3.0');
 
   // Default command: interactive startup wizard
   program
@@ -19,6 +28,7 @@ export function createCli() {
     .option('-d, --dir <path>', 'Project directory (skips folder question)')
     .action(async (opts: any) => {
       const { StartupApp } = await import('./tui/StartupApp.js');
+      anchorToBottom();
       const { waitUntilExit } = render(React.createElement(StartupApp, {
         initialDir: opts.dir ? resolve(opts.dir) : undefined,
       }));
@@ -73,6 +83,7 @@ export function createCli() {
         console.log(`\nRelay ${result.completed ? 'COMPLETE' : 'ended'}: ${result.sessionsRun} sessions, $${result.totalCostUsd.toFixed(2)} total`);
         process.exit(result.completed ? 0 : 1);
       } else {
+        anchorToBottom();
         const { waitUntilExit } = render(React.createElement(App, { config }));
         await waitUntilExit();
       }
@@ -120,6 +131,7 @@ export function createCli() {
         maxSessionLogEntries: 5,
       };
 
+      anchorToBottom();
       const { waitUntilExit } = render(React.createElement(App, { config }));
       await waitUntilExit();
     });

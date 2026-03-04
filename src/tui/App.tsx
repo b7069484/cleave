@@ -123,7 +123,6 @@ export function App({ config }: AppProps) {
         totalCostUsd={state.totalCostUsd}
         budgetUsd={state.budgetUsd}
         contextPercent={state.contextPercent}
-        remoteUrl={state.remoteUrl}
       />
       {state.overlayMode ? (
         <LimitOverlay
