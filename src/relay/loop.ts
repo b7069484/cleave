@@ -21,6 +21,7 @@ export class RelayLoop extends EventEmitter {
   private config: RelayConfig;
   private state: CleaveState;
   private transitionResolver: ((userInput?: string) => void) | null = null;
+  private queuedTransitionInput: string | undefined | null = null; // null = no queued value
   private allToolEvents: ParsedToolStart[] = [];
   private sessionErrors: Array<{ sessionNum: number; message: string }> = [];
   private consecutiveFailures: number = 0;
@@ -40,6 +41,9 @@ export class RelayLoop extends EventEmitter {
     if (this.transitionResolver) {
       this.transitionResolver(userInput);
       this.transitionResolver = null;
+    } else {
+      // Queue for the next waitForTransition call
+      this.queuedTransitionInput = userInput ?? undefined;
     }
   }
 
@@ -65,11 +69,16 @@ export class RelayLoop extends EventEmitter {
 
   private async waitForTransition(): Promise<string | undefined> {
     if (this.config.mode === 'auto' || this.config.mode === 'headless') {
-      // Auto/headless: no pause, continue immediately
       return undefined;
     }
 
-    // Guided mode: wait for TUI to call resolveTransition
+    // Check if a value was queued before we started waiting
+    if (this.queuedTransitionInput !== null) {
+      const val = this.queuedTransitionInput;
+      this.queuedTransitionInput = null;
+      return val;
+    }
+
     return new Promise<string | undefined>((resolve) => {
       this.transitionResolver = resolve;
     });

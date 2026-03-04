@@ -50,16 +50,21 @@ export class SessionRunner extends EventEmitter {
       env,
     });
 
+    if (!this.child?.stdin || !this.child?.stdout || !this.child?.stderr) {
+      throw new Error('Failed to create process streams — is Claude CLI installed?');
+    }
+
     // Always capture stderr
     let stderrOutput = '';
-    const stderrRl = createInterface({ input: this.child.stderr! });
+    const stderrRl = createInterface({ input: this.child.stderr });
     stderrRl.on('line', (line: string) => {
       stderrOutput += line + '\n';
     });
+    stderrRl.on('error', () => { /* stream closed */ });
 
     // Send prompt via stdin
-    this.child.stdin!.write(this.config.prompt);
-    this.child.stdin!.end();
+    this.child.stdin.write(this.config.prompt);
+    this.child.stdin.end();
 
     const result: SessionResult = {
       exitCode: 0,
@@ -76,7 +81,8 @@ export class SessionRunner extends EventEmitter {
 
     // Process stdout as NDJSON with stateful parser for deduplication
     const parser = new StreamParser();
-    const rl = createInterface({ input: this.child.stdout! });
+    const rl = createInterface({ input: this.child.stdout });
+    rl.on('error', () => { /* stream closed */ });
 
     for await (const line of rl) {
       if (!line.trim()) continue;
@@ -113,6 +119,8 @@ export class SessionRunner extends EventEmitter {
         }
       }
     }
+
+    stderrRl.close();
 
     // Wait for process to close
     const exitCode = await new Promise<number>((resolve) => {

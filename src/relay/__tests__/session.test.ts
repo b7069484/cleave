@@ -177,6 +177,27 @@ describe('SessionRunner', () => {
     expect(usageEvent.outputTokens).toBe(100);
   });
 
+  it('throws descriptive error when child process streams are null', async () => {
+    const proc = Object.assign(new EventEmitter(), {
+      stdout: null,
+      stderr: null,
+      stdin: null,
+      pid: null,
+      kill: vi.fn(),
+      exitCode: null,
+    });
+    (spawn as any).mockReturnValue(proc);
+
+    const runner = new SessionRunner({
+      projectDir: '/tmp/test',
+      prompt: 'test',
+      handoffInstructions: '',
+      budget: 5,
+    });
+
+    await expect(runner.run()).rejects.toThrow('Failed to create process streams');
+  });
+
   it('never includes --remote-control flag (removed in 6.3.0)', () => {
     const runner = new SessionRunner({
       projectDir: '/tmp/test',
