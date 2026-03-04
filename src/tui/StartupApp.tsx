@@ -97,7 +97,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       if (cancelled) return;
       if (questions.length === 0) {
         // No questions — skip clarification
-        setInput(String(DEFAULT_CONFIG.maxSessions));
+        setInput('');
         setStep('sessions');
         return;
       }
@@ -135,14 +135,14 @@ export function StartupApp({ initialDir }: StartupAppProps) {
           setInput('');
         } else {
           // Done with questions — move to sessions
-          setInput(String(DEFAULT_CONFIG.maxSessions));
+          setInput('');
           setStep('sessions');
         }
         break;
       }
       case 'sessions':
         setSessions(input || String(DEFAULT_CONFIG.maxSessions));
-        setInput(String(DEFAULT_CONFIG.sessionBudget));
+        setInput('');
         setStep('budget');
         break;
       case 'budget':
@@ -171,7 +171,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       // In clarify step, Esc skips clarification
       if (step === 'clarify_ask' || step === 'clarify_loading') {
         setClarifySkipped(true);
-        setInput(String(DEFAULT_CONFIG.maxSessions));
+        setInput('');
         setStep('sessions');
         return;
       }
@@ -333,7 +333,11 @@ export function StartupApp({ initialDir }: StartupAppProps) {
             {step === 'sessions' ? '>' : '\u2713'} Max sessions:{' '}
           </Text>
           {step === 'sessions' ? (
-            <Text>{input}<Text color="cyan">|</Text></Text>
+            input ? (
+              <Text>{input}<Text color="cyan">|</Text></Text>
+            ) : (
+              <Text dimColor>{String(DEFAULT_CONFIG.maxSessions)}<Text color="cyan">|</Text></Text>
+            )
           ) : (
             <Text bold>{sessions}</Text>
           )}
@@ -347,7 +351,11 @@ export function StartupApp({ initialDir }: StartupAppProps) {
             {step === 'budget' ? '>' : '\u2713'} Budget per session ($):{' '}
           </Text>
           {step === 'budget' ? (
-            <Text>{input}<Text color="cyan">|</Text></Text>
+            input ? (
+              <Text>{input}<Text color="cyan">|</Text></Text>
+            ) : (
+              <Text dimColor>{String(DEFAULT_CONFIG.sessionBudget)}<Text color="cyan">|</Text></Text>
+            )
           ) : (
             <Text bold>${budget}</Text>
           )}
