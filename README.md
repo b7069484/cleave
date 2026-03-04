@@ -1,4 +1,4 @@
-# Cleave v6
+# Cleave v6.3
 
 **Infinite context for Claude Code.**
 
@@ -46,11 +46,10 @@ A setup wizard that walks you through configuration:
 
 1. **Project folder** — where to work
 2. **Task description** — what to build/fix/process
-3. **Clarifying questions** — Claude analyzes your task and asks 2-3 smart follow-up questions to refine it (Esc to skip)
+3. **Strategy** — Execute (start immediately) or Plan (ask 2-3 clarifying questions first)
 4. **Max sessions** — how many sessions to chain (default: 15)
 5. **Budget per session** — cost cap per session in USD equivalent (default: $5)
 6. **Session mode** — Guided (pause between sessions) or Auto (no pauses)
-7. **Remote control** — optionally enable browser access via Claude Code's remote control (provides a URL you can open on your phone or another device to monitor and intervene)
 
 Then it starts the relay with the TUI.
 
@@ -83,7 +82,7 @@ No TUI at all. Outputs session start/end markers to the console. Designed for CI
 |---|---|---|---|---|
 | **Command** | `cleave` | `cleave run "task"` | `cleave run "task" --auto` | `cleave run "task" --headless` |
 | **Setup wizard** | Yes | No | No | No |
-| **Task clarification** | AI-powered Q&A | No | No | No |
+| **Task clarification** | Optional (Plan strategy) | No | No | No |
 | **Real-time TUI** | Yes | Yes | Yes | No |
 | **Pause between sessions** | 10s (guided) | 10s countdown | 3s countdown | None |
 | **Inject instructions** | Yes | Yes | No | No |
@@ -205,7 +204,6 @@ Cleave's real-time terminal interface shows everything that matters:
 - **Stream** — live activity feed showing tool calls, text output, agent spawns
 - **Running agents** — background subagents with type and elapsed time
 - **Knowledge** — insight count (permanent discoveries) plus core/session KB breakdown
-- **Remote** — when remote control is enabled, shows the browser URL for the current session
 - **Handoffs** — successful handoff count (0/N, increments as sessions chain)
 - **Limit controls** — press `S` or `B` anytime to adjust session limit or budget on the fly
 
@@ -260,7 +258,7 @@ src/
 └── tui/
     ├── App.tsx                # Main app — routes between phases
     ├── StartupApp.tsx         # Interactive setup wizard
-    ├── Header.tsx             # Session info, context bar, cost, remote URL
+    ├── Header.tsx             # Session info, context bar, cost
     ├── StreamView.tsx         # Live activity feed
     ├── Footer.tsx             # Knowledge metrics, handoff counter, limit controls
     ├── CompletionTransition.tsx # Post-completion screen (follow-up, add sessions, quit)
