@@ -11,6 +11,7 @@ export declare class RelayLoop extends EventEmitter {
     private config;
     private state;
     private transitionResolver;
+    private queuedTransitionInput;
     private allToolEvents;
     private sessionErrors;
     private consecutiveFailures;

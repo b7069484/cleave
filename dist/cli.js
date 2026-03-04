@@ -2,8 +2,31 @@ import { Command } from 'commander';
 import { render } from 'ink';
 import React from 'react';
 import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { App } from './tui/App.js';
 import { DEFAULT_CONFIG } from './relay/config.js';
+function validateConfig(config) {
+    if (config.maxSessions < 1) {
+        console.error('Error: --sessions must be at least 1');
+        process.exit(1);
+    }
+    if (config.sessionBudget <= 0) {
+        console.error('Error: --budget must be greater than 0');
+        process.exit(1);
+    }
+    if (!existsSync(config.projectDir)) {
+        console.error(`Error: directory not found: ${config.projectDir}`);
+        process.exit(1);
+    }
+    try {
+        execFileSync('claude', ['--version'], { stdio: 'pipe' });
+    }
+    catch {
+        console.error('Error: Claude CLI not found. Install it first: https://docs.anthropic.com/en/docs/claude-code');
+        process.exit(1);
+    }
+}
 /**
  * Push cursor to bottom of terminal before rendering TUI.
  * This makes the TUI start at the bottom and scroll upward (like Claude Code).
@@ -16,7 +39,7 @@ export function createCli() {
     const program = new Command()
         .name('cleave')
         .description('Infinite context for Claude Code — autonomous session relay with real-time TUI')
-        .version('6.3.3');
+        .version('6.4.0');
     // Default command: interactive startup wizard
     program
         .command('start', { isDefault: true })
@@ -59,6 +82,7 @@ export function createCli() {
             allowedTools: opts.allowedTools,
             maxSessionLogEntries: DEFAULT_CONFIG.maxSessionLogEntries,
         };
+        validateConfig(config);
         if (mode === 'headless') {
             // Headless: no TUI, run relay directly with console logging
             const { RelayLoop } = await import('./relay/loop.js');
@@ -118,6 +142,7 @@ export function createCli() {
             skipPermissions: opts.skipPermissions,
             maxSessionLogEntries: 5,
         };
+        validateConfig(config);
         anchorToBottom();
         const { waitUntilExit } = render(React.createElement(App, { config }));
         await waitUntilExit();

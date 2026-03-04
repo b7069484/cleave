@@ -13,7 +13,7 @@ export function parseKnowledgeMetrics(content) {
         coreSection = content.slice(0, sessionLogIndex);
         sessionSection = content.slice(sessionLogIndex);
     }
-    const insightCount = (coreSection.match(/^- .+/gm) ?? []).length;
+    const insightCount = (coreSection.match(/^\d+\.\s+.+/gm) ?? []).length;
     return {
         insightCount,
         coreSizeBytes: Buffer.byteLength(coreSection, 'utf-8'),
