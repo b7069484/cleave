@@ -130,6 +130,18 @@ export function useRelay(config: RelayConfig) {
       }
 
       setState(s => {
+        // tool_input events update existing tool_start events rather than appending
+        if (event.kind === 'tool_input') {
+          return {
+            ...s,
+            events: s.events.map(e =>
+              e.kind === 'tool_start' && e.id === event.id
+                ? { ...e, input: event.input }
+                : e
+            ),
+          };
+        }
+
         const newState = { ...s, events: [...s.events, event] };
 
         if (event.kind === 'tool_start') {

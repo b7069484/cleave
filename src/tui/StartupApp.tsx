@@ -169,7 +169,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
     }
   }, [step, input, clarifyQuestions, clarifyIndex]);
 
-  useInput(useCallback((ch: string, key: { return?: boolean; backspace?: boolean; escape?: boolean; tab?: boolean }) => {
+  useInput(useCallback((ch: string, key: { return?: boolean; backspace?: boolean; delete?: boolean; escape?: boolean; tab?: boolean }) => {
     if (started) return;
 
     if (key.escape) {
@@ -212,7 +212,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       return;
     }
 
-    if (key.backspace || ch === '\x7f') {
+    if (key.backspace || key.delete) {
       setInput(v => v.slice(0, -1));
       return;
     }

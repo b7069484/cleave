@@ -49,7 +49,7 @@ export function Transition({
   }, [paused, onComplete, userText]);
 
   // Handle keyboard input in guided mode
-  useInput(useCallback((input: string, key: { return?: boolean; backspace?: boolean; escape?: boolean }) => {
+  useInput(useCallback((input: string, key: { return?: boolean; backspace?: boolean; delete?: boolean; escape?: boolean }) => {
     if (mode === 'auto') return;
 
     if (key.escape || input === 'q' || input === 'Q') {
@@ -68,7 +68,7 @@ export function Transition({
       return;
     }
 
-    if (key.backspace || input === '\x7f') {
+    if (key.backspace || key.delete) {
       if (!paused && userText.length === 0) return;
       setPaused(true);
       setUserText(t => t.slice(0, -1));

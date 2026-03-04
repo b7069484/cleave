@@ -23,7 +23,7 @@ export function CompletionTransition({
   const [userText, setUserText] = useState('');
   const [typing, setTyping] = useState(false);
 
-  useInput(useCallback((input: string, key: { return?: boolean; backspace?: boolean; escape?: boolean }) => {
+  useInput(useCallback((input: string, key: { return?: boolean; backspace?: boolean; delete?: boolean; escape?: boolean }) => {
     if (key.escape) {
       if (typing) {
         setUserText('');
@@ -51,7 +51,7 @@ export function CompletionTransition({
       return;
     }
 
-    if (key.backspace || input === '\x7f') {
+    if (key.backspace || key.delete) {
       if (typing) {
         setUserText(t => {
           const next = t.slice(0, -1);

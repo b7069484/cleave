@@ -26,7 +26,7 @@ export function LimitOverlay({
   const isSessions = type === 'sessions';
   const title = isSessions ? 'Adjust Session Limit' : 'Adjust Session Budget';
 
-  useInput(useCallback((input: string, key: { return?: boolean; escape?: boolean; backspace?: boolean }) => {
+  useInput(useCallback((input: string, key: { return?: boolean; escape?: boolean; backspace?: boolean; delete?: boolean }) => {
     if (key.escape) {
       onCancel();
       return;
@@ -46,7 +46,7 @@ export function LimitOverlay({
       return;
     }
 
-    if (key.backspace || input === '\x7f') {
+    if (key.backspace || key.delete) {
       setInputText(t => t.slice(0, -1));
       setError('');
       return;

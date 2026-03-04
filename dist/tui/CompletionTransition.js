@@ -29,7 +29,7 @@ export function CompletionTransition({ completed, sessionsRun, totalCostUsd, pro
             }
             return;
         }
-        if (key.backspace || input === '\x7f') {
+        if (key.backspace || key.delete) {
             if (typing) {
                 setUserText(t => {
                     const next = t.slice(0, -1);

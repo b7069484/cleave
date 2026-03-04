@@ -206,7 +206,7 @@ export function StartupApp({ initialDir }) {
             }
             return;
         }
-        if (key.backspace || ch === '\x7f') {
+        if (key.backspace || key.delete) {
             setInput(v => v.slice(0, -1));
             return;
         }
