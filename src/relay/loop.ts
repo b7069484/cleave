@@ -175,7 +175,6 @@ export class RelayLoop extends EventEmitter {
           verbose: this.config.verbose,
           skipPermissions: this.config.skipPermissions,
           allowedTools: this.config.allowedTools,
-          remoteControl: this.config.remoteControl,
         });
 
         // Forward events from session to relay
@@ -184,10 +183,6 @@ export class RelayLoop extends EventEmitter {
           if (event.kind === 'tool_start') {
             this.allToolEvents.push(event as ParsedToolStart);
           }
-        });
-
-        runner.on('remote_url', (url: string) => {
-          this.emit('remote_url', url);
         });
 
         this.emit('session_start', { sessionNum: i, maxSessions: this.config.maxSessions });
@@ -217,8 +212,9 @@ export class RelayLoop extends EventEmitter {
 
           await generateRescueHandoff(this.state, i, this.config.initialTask);
 
-          // Emit transition and wait (in guided mode)
-          this.emit('transition', { sessionNum: i, type: 'rescue' });
+          // Emit rescue + session_end so TUI shows transition screen
+          this.emit('rescue', { sessionNum: i });
+          this.emit('session_end', { sessionNum: i, result: null, totalCost });
           const userInput = await this.waitForTransition();
           if (userInput) {
             const existing = await this.state.readNextPrompt();

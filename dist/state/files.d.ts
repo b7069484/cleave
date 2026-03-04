@@ -1,0 +1,30 @@
+export declare class CleaveState {
+    private projectDir;
+    private cleaveDir;
+    private logsDir;
+    constructor(projectDir: string);
+    init(): Promise<void>;
+    getSessionCount(): Promise<number>;
+    setSessionCount(n: number): Promise<void>;
+    getMaxSessions(): Promise<number | null>;
+    setMaxSessions(n: number): Promise<void>;
+    getSessionBudget(): Promise<number | null>;
+    setSessionBudget(n: number): Promise<void>;
+    markSessionStart(): Promise<void>;
+    getSessionStart(): Promise<number>;
+    readNextPrompt(): Promise<string>;
+    writeNextPrompt(content: string): Promise<void>;
+    readProgress(): Promise<string>;
+    writeProgress(content: string): Promise<void>;
+    readKnowledge(): Promise<string>;
+    writeKnowledge(content: string): Promise<void>;
+    readHandoffSignal(): Promise<string | null>;
+    writeHandoffSignal(signal: string): Promise<void>;
+    clearHandoffSignal(): Promise<void>;
+    archiveSession(sessionNum: number): Promise<void>;
+    get dir(): string;
+    get project(): string;
+    private readInternal;
+    private writeInternal;
+    private readInt;
+}

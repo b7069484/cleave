@@ -51,7 +51,7 @@ export function CompletionTransition({
       return;
     }
 
-    if (key.backspace) {
+    if (key.backspace || input === '\x7f') {
       if (typing) {
         setUserText(t => {
           const next = t.slice(0, -1);

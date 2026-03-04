@@ -13,7 +13,6 @@ export interface SessionConfig {
   verbose?: boolean;
   skipPermissions?: boolean;
   allowedTools?: string[];
-  remoteControl?: boolean;
 }
 
 export interface SessionResult {
@@ -56,13 +55,6 @@ export class SessionRunner extends EventEmitter {
     const stderrRl = createInterface({ input: this.child.stderr! });
     stderrRl.on('line', (line: string) => {
       stderrOutput += line + '\n';
-      // Capture remote control URL if enabled
-      if (this.config.remoteControl) {
-        const urlMatch = line.match(/https?:\/\/\S+/);
-        if (urlMatch) {
-          this.emit('remote_url', urlMatch[0]);
-        }
-      }
     });
 
     // Send prompt via stdin
@@ -176,10 +168,6 @@ export class SessionRunner extends EventEmitter {
       for (const tool of this.config.allowedTools) {
         args.push('--allowedTools', tool);
       }
-    }
-
-    if (this.config.remoteControl) {
-      args.push('--remote-control');
     }
 
     return args;

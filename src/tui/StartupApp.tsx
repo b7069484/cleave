@@ -6,7 +6,7 @@ import { App } from './App.js';
 import type { RelayConfig, CleaveMode } from '../relay/config.js';
 import { DEFAULT_CONFIG } from '../relay/config.js';
 
-type SetupStep = 'dir' | 'task' | 'clarify_loading' | 'clarify_ask' | 'sessions' | 'budget' | 'mode' | 'remote' | 'confirm';
+type SetupStep = 'dir' | 'task' | 'strategy' | 'clarify_loading' | 'clarify_ask' | 'sessions' | 'budget' | 'mode' | 'confirm';
 
 interface ClarifyQuestion {
   question: string;
@@ -77,7 +77,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
   const [sessions, setSessions] = useState(String(DEFAULT_CONFIG.maxSessions));
   const [budget, setBudget] = useState(String(DEFAULT_CONFIG.sessionBudget));
   const [mode, setMode] = useState<CleaveMode>('guided');
-  const [remoteControl, setRemoteControl] = useState(false);
+  const [strategy, setStrategy] = useState<'execute' | 'plan'>('execute');
   const [started, setStarted] = useState(false);
 
   // Clarification state
@@ -121,7 +121,15 @@ export function StartupApp({ initialDir }: StartupAppProps) {
         if (!input.trim()) return;
         setTask(input.trim());
         setInput('');
-        setStep('clarify_loading');
+        setStep('strategy');
+        break;
+      case 'strategy':
+        setInput('');
+        if (strategy === 'execute') {
+          setStep('sessions');
+        } else {
+          setStep('clarify_loading');
+        }
         break;
       case 'clarify_ask': {
         // Save answer for current question
@@ -153,9 +161,6 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       case 'mode':
         // Mode is selected via 1/2 keys, Enter confirms current selection
         setInput('');
-        setStep('remote');
-        break;
-      case 'remote':
         setStep('confirm');
         break;
       case 'confirm':
@@ -190,6 +195,14 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       return;
     }
 
+    // Strategy selection: 1 = execute, 2 = plan
+    if (step === 'strategy') {
+      if (ch === '1') { setStrategy('execute'); return; }
+      if (ch === '2') { setStrategy('plan'); return; }
+      if (key.tab) { setStrategy(s => s === 'execute' ? 'plan' : 'execute'); return; }
+      return;
+    }
+
     // Mode selection: 1 = guided, 2 = auto
     if (step === 'mode') {
       if (ch === '1') { setMode('guided'); return; }
@@ -199,14 +212,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       return;
     }
 
-    if (step === 'remote') {
-      if (ch === '1') { setRemoteControl(true); return; }
-      if (ch === '2') { setRemoteControl(false); return; }
-      if (key.tab) { setRemoteControl(r => !r); return; }
-      return;
-    }
-
-    if (key.backspace) {
+    if (key.backspace || ch === '\x7f') {
       setInput(v => v.slice(0, -1));
       return;
     }
@@ -233,7 +239,6 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       maxSessions: parseInt(sessions, 10) || DEFAULT_CONFIG.maxSessions!,
       sessionBudget: parseFloat(budget) || DEFAULT_CONFIG.sessionBudget!,
       mode,
-      remoteControl,
       skipPermissions: true,
       maxSessionLogEntries: DEFAULT_CONFIG.maxSessionLogEntries!,
     };
@@ -242,7 +247,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
 
   // Helper to check if a step is past
   const isPast = (s: SetupStep) => {
-    const order: SetupStep[] = ['dir', 'task', 'clarify_loading', 'clarify_ask', 'sessions', 'budget', 'mode', 'remote', 'confirm'];
+    const order: SetupStep[] = ['dir', 'task', 'strategy', 'clarify_loading', 'clarify_ask', 'sessions', 'budget', 'mode', 'confirm'];
     return order.indexOf(s) < order.indexOf(step);
   };
 
@@ -283,6 +288,27 @@ export function StartupApp({ initialDir }: StartupAppProps) {
           )}
         </Box>
       ) : null}
+
+      {/* Strategy: Execute vs Plan */}
+      {(isPast('strategy') || step === 'strategy') && (
+        <Box flexDirection="column">
+          <Text color={step === 'strategy' ? 'cyan' : 'green'}>
+            {step === 'strategy' ? '>' : '\u2713'} Strategy:{' '}
+            {step !== 'strategy' && <Text bold>{strategy === 'execute' ? 'Execute immediately' : 'Plan (clarify first)'}</Text>}
+          </Text>
+          {step === 'strategy' && (
+            <Box flexDirection="column" marginLeft={4}>
+              <Text color={strategy === 'execute' ? 'cyan' : 'gray'}>
+                {strategy === 'execute' ? '\u25B6' : ' '} [1] Execute — skip clarifying questions, start working immediately
+              </Text>
+              <Text color={strategy === 'plan' ? 'cyan' : 'gray'}>
+                {strategy === 'plan' ? '\u25B6' : ' '} [2] Plan — ask 2-3 clarifying questions first
+              </Text>
+              <Text dimColor>  Press 1, 2, or Tab to switch. Enter to confirm.</Text>
+            </Box>
+          )}
+        </Box>
+      )}
 
       {/* Clarify Loading */}
       {step === 'clarify_loading' && (
@@ -327,7 +353,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       )}
 
       {/* Sessions */}
-      {(step === 'sessions' || step === 'budget' || step === 'mode' || step === 'remote' || step === 'confirm') && (
+      {(step === 'sessions' || step === 'budget' || step === 'mode' || step === 'confirm') && (
         <Box>
           <Text color={step === 'sessions' ? 'cyan' : 'green'}>
             {step === 'sessions' ? '>' : '\u2713'} Max sessions:{' '}
@@ -345,7 +371,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       )}
 
       {/* Budget */}
-      {(step === 'budget' || step === 'mode' || step === 'remote' || step === 'confirm') && (
+      {(step === 'budget' || step === 'mode' || step === 'confirm') && (
         <Box>
           <Text color={step === 'budget' ? 'cyan' : 'green'}>
             {step === 'budget' ? '>' : '\u2713'} Budget per session ($):{' '}
@@ -363,7 +389,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       )}
 
       {/* Mode Selection */}
-      {(step === 'mode' || step === 'remote' || step === 'confirm') && (
+      {(step === 'mode' || step === 'confirm') && (
         <Box flexDirection="column">
           <Text color={step === 'mode' ? 'cyan' : 'green'}>
             {step === 'mode' ? '>' : '\u2713'} Session mode:{' '}
@@ -376,27 +402,6 @@ export function StartupApp({ initialDir }: StartupAppProps) {
               </Text>
               <Text color={mode === 'auto' ? 'cyan' : 'gray'}>
                 {mode === 'auto' ? '\u25B6' : ' '} [2] Auto — no pauses, fully autonomous
-              </Text>
-              <Text dimColor>  Press 1, 2, or Tab to switch. Enter to confirm.</Text>
-            </Box>
-          )}
-        </Box>
-      )}
-
-      {/* Remote Control */}
-      {(step === 'remote' || step === 'confirm') && (
-        <Box flexDirection="column">
-          <Text color={step === 'remote' ? 'cyan' : 'green'}>
-            {step === 'remote' ? '>' : '\u2713'} Remote control:{' '}
-            {step !== 'remote' && <Text bold>{remoteControl ? 'Enabled (browser access)' : 'Disabled'}</Text>}
-          </Text>
-          {step === 'remote' && (
-            <Box flexDirection="column" marginLeft={4}>
-              <Text color={remoteControl ? 'cyan' : 'gray'}>
-                {remoteControl ? '\u25B6' : ' '} [1] Yes — provide browser URL for mobile/remote access
-              </Text>
-              <Text color={!remoteControl ? 'cyan' : 'gray'}>
-                {!remoteControl ? '\u25B6' : ' '} [2] No — terminal only
               </Text>
               <Text dimColor>  Press 1, 2, or Tab to switch. Enter to confirm.</Text>
             </Box>

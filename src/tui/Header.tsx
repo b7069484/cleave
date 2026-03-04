@@ -11,7 +11,6 @@ interface HeaderProps {
   totalCostUsd: number;
   budgetUsd: number;
   contextPercent: number;
-  remoteUrl?: string;
 }
 
 function formatDuration(ms: number): string {
@@ -36,7 +35,6 @@ export function Header({
   totalCostUsd,
   budgetUsd,
   contextPercent,
-  remoteUrl,
 }: HeaderProps) {
   const dir = basename(projectDir);
   const barColor = contextPercent > 80 ? 'red' : contextPercent > 60 ? 'yellow' : 'green';
@@ -61,11 +59,6 @@ export function Header({
           {' '}Total: <Text bold>${totalCostUsd.toFixed(2)}</Text>
         </Text>
       </Box>
-      {remoteUrl && (
-        <Box>
-          <Text>Remote: <Text bold color="cyan">{remoteUrl}</Text></Text>
-        </Box>
-      )}
     </Box>
   );
 }

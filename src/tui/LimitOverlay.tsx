@@ -46,7 +46,7 @@ export function LimitOverlay({
       return;
     }
 
-    if (key.backspace) {
+    if (key.backspace || input === '\x7f') {
       setInputText(t => t.slice(0, -1));
       setError('');
       return;

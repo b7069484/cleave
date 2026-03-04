@@ -29,7 +29,6 @@ export interface RelayState {
   toolCount: number;
   knowledge: { insights: number; coreBytes: number; sessionBytes: number };
   handoffsCompleted: number; // Successful handoffs (increments when new session starts)
-  remoteUrl: string;
   runningAgents: RunningAgent[];
   progressSummary: string;
   error?: string;
@@ -52,7 +51,6 @@ export function useRelay(config: RelayConfig) {
     toolCount: 0,
     knowledge: { insights: 0, coreBytes: 0, sessionBytes: 0 },
     handoffsCompleted: 0,
-    remoteUrl: '',
     runningAgents: [],
     progressSummary: '',
     completed: false,
@@ -121,7 +119,6 @@ export function useRelay(config: RelayConfig) {
         knowledge,
         // Session 2+ starting means a handoff succeeded
         handoffsCompleted: sessionNum > 1 ? sessionNum - 1 : 0,
-        remoteUrl: '',
         runningAgents: [],
       }));
     });
@@ -205,10 +202,6 @@ export function useRelay(config: RelayConfig) {
       if (config.mode === 'auto' || config.mode === 'headless') {
         loop.resolveTransition();
       }
-    });
-
-    loop.on('remote_url', (url: string) => {
-      setState(s => ({ ...s, remoteUrl: url }));
     });
 
     loop.on('session_error', ({ sessionNum, error }: { sessionNum: number; error: unknown }) => {

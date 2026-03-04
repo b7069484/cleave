@@ -177,25 +177,12 @@ describe('SessionRunner', () => {
     expect(usageEvent.outputTokens).toBe(100);
   });
 
-  it('includes remote control flag when remoteControl is true', () => {
+  it('never includes --remote-control flag (removed in 6.3.0)', () => {
     const runner = new SessionRunner({
       projectDir: '/tmp/test',
       prompt: 'test',
       handoffInstructions: '',
       budget: 5,
-      remoteControl: true,
-    });
-    const args = (runner as any).buildArgs();
-    expect(args).toContain('--remote-control');
-  });
-
-  it('excludes remote control flag when remoteControl is false', () => {
-    const runner = new SessionRunner({
-      projectDir: '/tmp/test',
-      prompt: 'test',
-      handoffInstructions: '',
-      budget: 5,
-      remoteControl: false,
     });
     const args = (runner as any).buildArgs();
     expect(args).not.toContain('--remote-control');
