@@ -237,6 +237,15 @@ export class RelayLoop extends EventEmitter {
         totalCost += sessionResult.totalCostUsd || sessionResult.costUsd;
         totalDuration += sessionResult.durationMs;
 
+        // Wait if rate-limited before starting next session
+        if (sessionResult.rateLimited && sessionResult.rateLimitResetAt) {
+          const waitMs = sessionResult.rateLimitResetAt - Date.now();
+          if (waitMs > 0 && waitMs < 600_000) {  // Cap at 10 minutes
+            this.emit('rate_limit_wait', { resetAt: sessionResult.rateLimitResetAt });
+            await new Promise(r => setTimeout(r, waitMs));
+          }
+        }
+
         // Archive session files
         await this.state.archiveSession(i);
 
