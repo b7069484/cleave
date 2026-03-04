@@ -3,7 +3,7 @@ import { readFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { RelayLoop } from '../relay/loop.js';
 import type { RelayConfig } from '../relay/config.js';
-import type { ParsedEvent } from '../stream/types.js';
+import type { ParsedEvent, ParsedToolStart } from '../stream/types.js';
 import type { LimitType } from './LimitOverlay.js';
 import { parseKnowledgeMetrics } from '../state/knowledge.js';
 
@@ -62,6 +62,8 @@ export function useRelay(config: RelayConfig) {
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const cumulativeCostRef = useRef(0);  // Track cost across sessions
   const loopRef = useRef<RelayLoop | null>(null);
+  // Buffer tool_start events until their input is populated (Ink's <Static> can't re-render)
+  const pendingToolsRef = useRef<Map<string, ParsedToolStart>>(new Map());
 
   useEffect(() => {
     // Set up event log file
@@ -129,59 +131,117 @@ export function useRelay(config: RelayConfig) {
         logEvent('event', event);
       }
 
-      setState(s => {
-        // tool_input events update existing tool_start events rather than appending
-        if (event.kind === 'tool_input') {
-          return {
+      // --- Tool buffering: hold tool_start until input is known ---
+      // Ink's <Static> renders items once and can't update them, so we must
+      // wait for tool_input before adding tool_start to the events array.
+
+      if (event.kind === 'tool_start') {
+        const hasInput = event.input && Object.keys(event.input).length > 0;
+        if (!hasInput) {
+          // Buffer — don't add to events yet, but track toolCount and agents
+          pendingToolsRef.current.set(event.id, event);
+          setState(s => {
+            const newState = { ...s, toolCount: s.toolCount + 1 };
+            if (event.name === 'Agent') {
+              newState.runningAgents = [...s.runningAgents, {
+                id: event.id,
+                description: 'agent',
+                type: 'unknown',
+                startedAt: Date.now(),
+              }];
+            }
+            return newState;
+          });
+          return;
+        }
+        // Has input already — add directly (also update agent info)
+        setState(s => {
+          const newState = { ...s, events: [...s.events, event], toolCount: s.toolCount + 1 };
+          if (event.name === 'Agent') {
+            newState.runningAgents = [...s.runningAgents, {
+              id: event.id,
+              description: String((event.input as Record<string, unknown>).description ?? 'agent'),
+              type: String((event.input as Record<string, unknown>).subagent_type ?? 'unknown'),
+              startedAt: Date.now(),
+            }];
+          }
+          return newState;
+        });
+        return;
+      }
+
+      if (event.kind === 'tool_input') {
+        const pending = pendingToolsRef.current.get(event.id);
+        if (pending) {
+          // Merge input and flush buffered tool to events
+          pendingToolsRef.current.delete(event.id);
+          const merged: ParsedToolStart = { ...pending, input: event.input };
+          setState(s => {
+            const newState = { ...s, events: [...s.events, merged] };
+            // Update agent info now that we have real input
+            if (pending.name === 'Agent') {
+              newState.runningAgents = s.runningAgents.map(a =>
+                a.id === event.id ? {
+                  ...a,
+                  description: String((event.input as Record<string, unknown>).description ?? a.description),
+                  type: String((event.input as Record<string, unknown>).subagent_type ?? a.type),
+                } : a
+              );
+            }
+            return newState;
+          });
+        } else {
+          // Tool was already in events (had input from start), update in place
+          setState(s => ({
             ...s,
             events: s.events.map(e =>
               e.kind === 'tool_start' && e.id === event.id
                 ? { ...e, input: event.input }
                 : e
             ),
-          };
+          }));
         }
+        return;
+      }
 
+      if (event.kind === 'tool_end') {
+        // Flush any pending tool that never got its input
+        const pending = pendingToolsRef.current.get(event.id);
+        if (pending) {
+          pendingToolsRef.current.delete(event.id);
+          setState(s => ({
+            ...s,
+            events: [...s.events, pending],
+            runningAgents: s.runningAgents.filter(a => a.id !== event.id),
+          }));
+          return;
+        }
+        setState(s => ({
+          ...s,
+          events: [...s.events, event],
+          runningAgents: s.runningAgents.some(a => a.id === event.id)
+            ? s.runningAgents.filter(a => a.id !== event.id)
+            : s.runningAgents,
+        }));
+        return;
+      }
+
+      // All other events: append normally
+      setState(s => {
         const newState = { ...s, events: [...s.events, event] };
-
-        if (event.kind === 'tool_start') {
-          newState.toolCount = s.toolCount + 1;
-
-          // Track Agent tool calls as running background agents
-          if (event.name === 'Agent') {
-            const agent: RunningAgent = {
-              id: event.id,
-              description: String((event.input as Record<string, unknown>).description ?? 'agent'),
-              type: String((event.input as Record<string, unknown>).subagent_type ?? 'unknown'),
-              startedAt: Date.now(),
-            };
-            newState.runningAgents = [...s.runningAgents, agent];
-          }
-        }
-
-        if (event.kind === 'tool_end') {
-          // Remove completed agent from running list
-          if (s.runningAgents.some(a => a.id === event.id)) {
-            newState.runningAgents = s.runningAgents.filter(a => a.id !== event.id);
-          }
-        }
 
         if (event.kind === 'usage') {
           const totalTokens = event.inputTokens + event.outputTokens;
           newState.contextPercent = Math.min(99, Math.round((totalTokens / 200_000) * 100));
-          // Estimate cost from tokens (Opus pricing: $15/M input, $75/M output)
           const estimatedCost = (event.inputTokens * 15 + event.outputTokens * 75) / 1_000_000;
           newState.sessionCostUsd = estimatedCost;
           newState.totalCostUsd = cumulativeCostRef.current + estimatedCost;
         }
 
         if (event.kind === 'result') {
-          // Result event is authoritative — use its cost and compute context %
           newState.sessionCostUsd = event.totalCostUsd;
           cumulativeCostRef.current += event.totalCostUsd;
           newState.totalCostUsd = cumulativeCostRef.current;
-
-          // Use result event's token counts for context % (most accurate)
           if (event.inputTokens > 0 || event.outputTokens > 0) {
             const totalTokens = event.inputTokens + event.outputTokens;
             const ctxWindow = event.contextWindow || 200_000;

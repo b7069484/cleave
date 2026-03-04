@@ -17,6 +17,8 @@ export declare class StreamParser {
     private emittedTextLength;
     private seenToolIds;
     private toolInputPopulated;
+    private blockIndexToToolId;
+    private inputFragments;
     parseLine(line: string): ParsedEvent[];
     /**
      * Reset state between sessions (new conversation = new content tracking)

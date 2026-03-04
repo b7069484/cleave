@@ -22,6 +22,10 @@ export class StreamParser {
   private emittedTextLength = 0;
   private seenToolIds = new Set<string>();
   private toolInputPopulated = new Set<string>();
+  // Track block index → tool ID for content_block_stop
+  private blockIndexToToolId = new Map<number, string>();
+  // Accumulate input_json_delta fragments per block index
+  private inputFragments = new Map<number, string>();
 
   parseLine(line: string): ParsedEvent[] {
     const trimmed = line.trim();
@@ -41,6 +45,7 @@ export class StreamParser {
       case 'content_block_start':
         if (event.content_block?.type === 'tool_use' && event.content_block.name) {
           const id = event.content_block.id ?? `block_${event.index}`;
+          this.blockIndexToToolId.set(event.index, id);
           if (!this.seenToolIds.has(id)) {
             this.seenToolIds.add(id);
             return [{
@@ -58,10 +63,29 @@ export class StreamParser {
           this.emittedTextLength += event.delta.text.length;
           return [{ kind: 'text', text: event.delta.text }];
         }
+        if (event.delta?.type === 'input_json_delta' && event.delta.partial_json) {
+          const existing = this.inputFragments.get(event.index) ?? '';
+          this.inputFragments.set(event.index, existing + event.delta.partial_json);
+        }
         return [];
 
-      case 'content_block_stop':
-        return [{ kind: 'tool_end', id: `block_${event.index}` }];
+      case 'content_block_stop': {
+        const results: ParsedEvent[] = [];
+        // Emit tool_input from accumulated JSON fragments (backup to assistant snapshot path)
+        const toolId = this.blockIndexToToolId.get(event.index);
+        const fragments = this.inputFragments.get(event.index);
+        if (toolId && fragments && !this.toolInputPopulated.has(toolId)) {
+          try {
+            const input = JSON.parse(fragments);
+            this.toolInputPopulated.add(toolId);
+            results.push({ kind: 'tool_input', id: toolId, input });
+          } catch { /* incomplete JSON */ }
+        }
+        this.inputFragments.delete(event.index);
+        this.blockIndexToToolId.delete(event.index);
+        results.push({ kind: 'tool_end', id: toolId ?? `block_${event.index}` });
+        return results;
+      }
 
       case 'result':
         return this.parseResult(event);
@@ -113,6 +137,8 @@ export class StreamParser {
     this.emittedTextLength = 0;
     this.seenToolIds.clear();
     this.toolInputPopulated.clear();
+    this.blockIndexToToolId.clear();
+    this.inputFragments.clear();
   }
 
   private parseAssistantSnapshot(event: StreamEvent & { type: 'assistant' }): ParsedEvent[] {
