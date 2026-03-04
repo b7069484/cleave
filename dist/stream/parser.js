@@ -15,6 +15,7 @@
 export class StreamParser {
     emittedTextLength = 0;
     seenToolIds = new Set();
+    toolInputPopulated = new Set();
     parseLine(line) {
         const trimmed = line.trim();
         if (!trimmed)
@@ -94,6 +95,7 @@ export class StreamParser {
     reset() {
         this.emittedTextLength = 0;
         this.seenToolIds.clear();
+        this.toolInputPopulated.clear();
     }
     parseAssistantSnapshot(event) {
         const results = [];
@@ -115,14 +117,28 @@ export class StreamParser {
         }
         // Emit tool_use blocks we haven't seen before
         for (const block of content) {
-            if (block.type === 'tool_use' && !this.seenToolIds.has(block.id)) {
-                this.seenToolIds.add(block.id);
-                results.push({
-                    kind: 'tool_start',
-                    name: block.name,
-                    id: block.id,
-                    input: block.input,
-                });
+            if (block.type === 'tool_use') {
+                if (!this.seenToolIds.has(block.id)) {
+                    this.seenToolIds.add(block.id);
+                    const hasInput = block.input && Object.keys(block.input).length > 0;
+                    if (hasInput)
+                        this.toolInputPopulated.add(block.id);
+                    results.push({
+                        kind: 'tool_start',
+                        name: block.name,
+                        id: block.id,
+                        input: block.input,
+                    });
+                }
+                else if (!this.toolInputPopulated.has(block.id) && block.input && Object.keys(block.input).length > 0) {
+                    // Tool was emitted earlier with empty input; now we have the real input
+                    this.toolInputPopulated.add(block.id);
+                    results.push({
+                        kind: 'tool_input',
+                        id: block.id,
+                        input: block.input,
+                    });
+                }
             }
         }
         // Always extract usage

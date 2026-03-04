@@ -40,7 +40,7 @@ export function Transition({ sessionNum, maxSessions, contextPercent, costUsd, t
             }
             return;
         }
-        if (key.backspace || input === '\x7f') {
+        if (key.backspace || key.delete) {
             if (!paused && userText.length === 0)
                 return;
             setPaused(true);

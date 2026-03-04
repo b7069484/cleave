@@ -24,7 +24,7 @@ export function LimitOverlay({ type, currentValue, sessionNum, maxSessions, onCo
             onConfirm(parsed);
             return;
         }
-        if (key.backspace || input === '\x7f') {
+        if (key.backspace || key.delete) {
             setInputText(t => t.slice(0, -1));
             setError('');
             return;

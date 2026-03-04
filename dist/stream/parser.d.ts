@@ -16,6 +16,7 @@ import type { ParsedEvent } from './types.js';
 export declare class StreamParser {
     private emittedTextLength;
     private seenToolIds;
+    private toolInputPopulated;
     parseLine(line: string): ParsedEvent[];
     /**
      * Reset state between sessions (new conversation = new content tracking)

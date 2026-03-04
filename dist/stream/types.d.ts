@@ -113,6 +113,11 @@ export interface ParsedToolEnd {
     kind: 'tool_end';
     id: string;
 }
+export interface ParsedToolInput {
+    kind: 'tool_input';
+    id: string;
+    input: Record<string, unknown>;
+}
 export interface ParsedResult {
     kind: 'result';
     costUsd: number;
@@ -144,4 +149,4 @@ export interface ParsedUsage {
     inputTokens: number;
     outputTokens: number;
 }
-export type ParsedEvent = ParsedTextChunk | ParsedToolStart | ParsedToolEnd | ParsedResult | ParsedError | ParsedRateLimit | ParsedSystem | ParsedUsage;
+export type ParsedEvent = ParsedTextChunk | ParsedToolStart | ParsedToolEnd | ParsedToolInput | ParsedResult | ParsedError | ParsedRateLimit | ParsedSystem | ParsedUsage;
