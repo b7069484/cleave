@@ -22,7 +22,7 @@ export function parseKnowledgeMetrics(content: string): KnowledgeMetrics {
     sessionSection = content.slice(sessionLogIndex);
   }
 
-  const insightCount = (coreSection.match(/^- .+/gm) ?? []).length;
+  const insightCount = (coreSection.match(/^\d+\.\s+.+/gm) ?? []).length;
 
   return {
     insightCount,

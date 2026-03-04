@@ -177,6 +177,27 @@ describe('SessionRunner', () => {
     expect(usageEvent.outputTokens).toBe(100);
   });
 
+  it('throws descriptive error when child process streams are null', async () => {
+    const proc = Object.assign(new EventEmitter(), {
+      stdout: null,
+      stderr: null,
+      stdin: null,
+      pid: null,
+      kill: vi.fn(),
+      exitCode: null,
+    });
+    (spawn as any).mockReturnValue(proc);
+
+    const runner = new SessionRunner({
+      projectDir: '/tmp/test',
+      prompt: 'test',
+      handoffInstructions: '',
+      budget: 5,
+    });
+
+    await expect(runner.run()).rejects.toThrow('Failed to create process streams');
+  });
+
   it('never includes --remote-control flag (removed in 6.3.0)', () => {
     const runner = new SessionRunner({
       projectDir: '/tmp/test',
@@ -186,6 +207,60 @@ describe('SessionRunner', () => {
     });
     const args = (runner as any).buildArgs();
     expect(args).not.toContain('--remote-control');
+  });
+
+  it('returns zero metrics when no result event is received', async () => {
+    const lines = [
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Started working...' }] }
+      }),
+      JSON.stringify({
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'tool_use', name: 'Read', id: 't1' }
+      }),
+      // NO result event — Claude crashed or disconnected
+    ];
+    (spawn as any).mockReturnValue(createMockProcess(lines));
+
+    const runner = new SessionRunner({
+      projectDir: '/tmp/test',
+      prompt: 'test',
+      handoffInstructions: '',
+      budget: 5,
+    });
+
+    const result = await runner.run();
+    expect(result.totalCostUsd).toBe(0);
+    expect(result.durationMs).toBe(0);
+    expect(result.toolUseCount).toBe(1);
+  });
+
+  it('captures rate limit info from stream events', async () => {
+    const lines = [
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Working...' }] }
+      }),
+      JSON.stringify({
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'blocked', resetsAt: 1700000000 }
+      }),
+      JSON.stringify({ type: 'result', total_cost_usd: 0.1, num_turns: 1 }),
+    ];
+    (spawn as any).mockReturnValue(createMockProcess(lines));
+
+    const runner = new SessionRunner({
+      projectDir: '/tmp/test',
+      prompt: 'test',
+      handoffInstructions: '',
+      budget: 5,
+    });
+
+    const result = await runner.run();
+    expect(result.rateLimited).toBe(true);
+    expect(result.rateLimitResetAt).toBe(1700000000000);
   });
 
   it('does not crash on stream error events', async () => {

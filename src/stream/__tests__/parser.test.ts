@@ -269,6 +269,24 @@ describe('StreamParser (stateful deduplication)', () => {
     expect(events.filter(e => e.kind === 'text')).toHaveLength(0);
   });
 
+  it('silently skips malformed JSON lines', () => {
+    const parser = new StreamParser();
+    const result = parser.parseLine('this is not json {broken');
+    expect(result).toEqual([]);
+  });
+
+  it('handles partial JSON followed by valid JSON', () => {
+    const parser = new StreamParser();
+    parser.parseLine('{"type": "assis');  // partial — skipped
+    const result = parser.parseLine(JSON.stringify({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text: 'Hello' }
+    }));
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe('text');
+  });
+
   it('resets state between sessions', () => {
     const parser = new StreamParser();
 

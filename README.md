@@ -1,4 +1,4 @@
-# Cleave v6.3
+# Cleave v6.4
 
 **Infinite context for Claude Code.**
 
@@ -231,7 +231,7 @@ Each session writes these files to `.cleave/`:
 | `.handoff_signal` | `HANDOFF_COMPLETE` or `TASK_FULLY_COMPLETE` | Signal file, cleared between sessions |
 
 **KNOWLEDGE.md** is the key to Cleave's compounding intelligence. It has two sections:
-- **Core Knowledge** — permanent insights (architecture decisions, key patterns, important file paths)
+- **Core Knowledge** — permanent insights as a numbered list (architecture decisions, key patterns, important file paths). Claude is instructed to only append new numbered items, never restructure.
 - **Session Log** — per-session work summaries
 
 The knowledge file is compacted between sessions to stay within a reasonable size, keeping the most recent session logs and all core knowledge.
