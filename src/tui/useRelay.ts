@@ -3,7 +3,7 @@ import { readFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { RelayLoop } from '../relay/loop.js';
 import type { RelayConfig } from '../relay/config.js';
-import type { ParsedEvent, ParsedToolStart } from '../stream/types.js';
+import type { ParsedEvent } from '../stream/types.js';
 import type { LimitType } from './LimitOverlay.js';
 import { parseKnowledgeMetrics } from '../state/knowledge.js';
 
@@ -62,8 +62,6 @@ export function useRelay(config: RelayConfig) {
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const cumulativeCostRef = useRef(0);  // Track cost across sessions
   const loopRef = useRef<RelayLoop | null>(null);
-  // Buffer tool_start events until their input is populated (Ink's <Static> can't re-render)
-  const pendingToolsRef = useRef<Map<string, ParsedToolStart>>(new Map());
 
   useEffect(() => {
     // Set up event log file
@@ -126,42 +124,18 @@ export function useRelay(config: RelayConfig) {
     });
 
     loop.on('event', (event: ParsedEvent) => {
-      // Log non-text events for debugging (text events are too noisy)
       if (event.kind !== 'text') {
         logEvent('event', event);
       }
 
-      // --- Tool buffering: hold tool_start until input is known ---
-      // Ink's <Static> renders items once and can't update them, so we must
-      // wait for tool_input before adding tool_start to the events array.
-
       if (event.kind === 'tool_start') {
-        const hasInput = event.input && Object.keys(event.input).length > 0;
-        if (!hasInput) {
-          // Buffer — don't add to events yet, but track toolCount and agents
-          pendingToolsRef.current.set(event.id, event);
-          setState(s => {
-            const newState = { ...s, toolCount: s.toolCount + 1 };
-            if (event.name === 'Agent') {
-              newState.runningAgents = [...s.runningAgents, {
-                id: event.id,
-                description: 'agent',
-                type: 'unknown',
-                startedAt: Date.now(),
-              }];
-            }
-            return newState;
-          });
-          return;
-        }
-        // Has input already — add directly (also update agent info)
         setState(s => {
           const newState = { ...s, events: [...s.events, event], toolCount: s.toolCount + 1 };
           if (event.name === 'Agent') {
             newState.runningAgents = [...s.runningAgents, {
               id: event.id,
-              description: String((event.input as Record<string, unknown>).description ?? 'agent'),
-              type: String((event.input as Record<string, unknown>).subagent_type ?? 'unknown'),
+              description: String((event.input as Record<string, unknown>)?.description ?? 'agent'),
+              type: String((event.input as Record<string, unknown>)?.subagent_type ?? 'unknown'),
               startedAt: Date.now(),
             }];
           }
@@ -171,62 +145,36 @@ export function useRelay(config: RelayConfig) {
       }
 
       if (event.kind === 'tool_input') {
-        const pending = pendingToolsRef.current.get(event.id);
-        if (pending) {
-          // Merge input and flush buffered tool to events
-          pendingToolsRef.current.delete(event.id);
-          const merged: ParsedToolStart = { ...pending, input: event.input };
-          setState(s => {
-            const newState = { ...s, events: [...s.events, merged] };
-            // Update agent info now that we have real input
-            if (pending.name === 'Agent') {
-              newState.runningAgents = s.runningAgents.map(a =>
-                a.id === event.id ? {
-                  ...a,
-                  description: String((event.input as Record<string, unknown>).description ?? a.description),
-                  type: String((event.input as Record<string, unknown>).subagent_type ?? a.type),
-                } : a
-              );
-            }
-            return newState;
-          });
-        } else {
-          // Tool was already in events (had input from start), update in place
-          setState(s => ({
-            ...s,
-            events: s.events.map(e =>
-              e.kind === 'tool_start' && e.id === event.id
-                ? { ...e, input: event.input }
-                : e
-            ),
-          }));
-        }
-        return;
-      }
-
-      if (event.kind === 'tool_end') {
-        // Flush any pending tool that never got its input
-        const pending = pendingToolsRef.current.get(event.id);
-        if (pending) {
-          pendingToolsRef.current.delete(event.id);
-          setState(s => ({
-            ...s,
-            events: [...s.events, pending],
-            runningAgents: s.runningAgents.filter(a => a.id !== event.id),
-          }));
-          return;
-        }
+        // Update the matching tool_start event in place (re-renderable list will show it)
         setState(s => ({
           ...s,
-          events: [...s.events, event],
-          runningAgents: s.runningAgents.some(a => a.id === event.id)
-            ? s.runningAgents.filter(a => a.id !== event.id)
-            : s.runningAgents,
+          events: s.events.map(e =>
+            e.kind === 'tool_start' && e.id === event.id
+              ? { ...e, input: event.input }
+              : e
+          ),
+          // Update agent info if applicable
+          runningAgents: s.runningAgents.map(a =>
+            a.id === event.id ? {
+              ...a,
+              description: String((event.input as Record<string, unknown>).description ?? a.description),
+              type: String((event.input as Record<string, unknown>).subagent_type ?? a.type),
+            } : a
+          ),
         }));
         return;
       }
 
-      // All other events: append normally
+      if (event.kind === 'tool_end') {
+        setState(s => ({
+          ...s,
+          events: [...s.events, event],
+          runningAgents: s.runningAgents.filter(a => a.id !== event.id),
+        }));
+        return;
+      }
+
+      // All other events
       setState(s => {
         const newState = { ...s, events: [...s.events, event] };
 
