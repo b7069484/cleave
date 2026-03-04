@@ -93,9 +93,42 @@ No TUI at all. Outputs session start/end markers to the console. Designed for CI
 
 ## Installation
 
+### Prerequisites
+
+Cleave requires **Node.js 18+** and **Claude Code CLI**. If you already have both, skip to "Install Cleave" below.
+
+**1. Node.js 18+**
+
+Check if you have it: `node --version`. If it prints v18 or higher, you're good. If not:
+
 ```bash
-npm install -g cleave
+# macOS with Homebrew:
+brew install node
+
+# macOS without Homebrew (installs nvm, then Node):
+curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+source ~/.zshrc
+nvm install 18
+
+# Or download the installer from https://nodejs.org
 ```
+
+**2. Claude Code CLI**
+
+Check if you have it: `claude --version`. If it works, you're good. If not:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude   # follow prompts to authenticate
+```
+
+### Install Cleave
+
+```bash
+npm install -g cleave-cli
+```
+
+This installs Cleave globally and makes the `cleave` command available in your terminal.
 
 Or run from source:
 
@@ -103,12 +136,10 @@ Or run from source:
 git clone https://github.com/b7069484/cleave.git
 cd cleave
 npm install && npm run build
-node dist/index.js
+npm link
 ```
 
-**Requirements:**
-- Node.js 18+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on your `PATH`
+> **Note:** The npm package is `cleave-cli`, not `cleave`. The `cleave` name on npm belongs to an unrelated project.
 
 ## Usage
 
