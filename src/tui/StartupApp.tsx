@@ -86,7 +86,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
   const [clarifySkipped, setClarifySkipped] = useState(false);
 
   // Current input value for the active field
-  const [input, setInput] = useState(step === 'dir' ? dir : '');
+  const [input, setInput] = useState('');
 
   // Fetch clarifying questions when we enter clarify_loading
   useEffect(() => {
@@ -184,6 +184,12 @@ export function StartupApp({ initialDir }: StartupAppProps) {
       return;
     }
 
+    // Ctrl+U: clear entire input line
+    if (ch === '\u0015') {
+      setInput('');
+      return;
+    }
+
     // Mode selection: 1 = guided, 2 = auto
     if (step === 'mode') {
       if (ch === '1') { setMode('guided'); return; }
@@ -244,7 +250,7 @@ export function StartupApp({ initialDir }: StartupAppProps) {
     <Box flexDirection="column" padding={1}>
       <Box borderStyle="double" borderColor="cyan" paddingX={2} paddingY={1} flexDirection="column" alignItems="center">
         <Text bold color="cyan">CLEAVE — Interactive Setup</Text>
-        <Text dimColor>Esc to cancel</Text>
+        <Text dimColor>Esc to cancel · Ctrl+U to clear</Text>
       </Box>
       <Text> </Text>
 
@@ -254,7 +260,11 @@ export function StartupApp({ initialDir }: StartupAppProps) {
           {step === 'dir' ? '>' : '\u2713'} Project folder:{' '}
         </Text>
         {step === 'dir' ? (
-          <Text>{input}<Text color="cyan">|</Text></Text>
+          input ? (
+            <Text>{input}<Text color="cyan">|</Text></Text>
+          ) : (
+            <Text dimColor>{process.cwd()}<Text color="cyan">|</Text></Text>
+          )
         ) : (
           <Text bold>{dir}</Text>
         )}
