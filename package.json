@@ -1,6 +1,6 @@
 {
   "name": "cleave-cli",
-  "version": "6.3.1",
+  "version": "6.3.2",
   "description": "Infinite context for Claude Code — autonomous session relay with real-time TUI",
   "type": "module",
   "main": "dist/index.js",
