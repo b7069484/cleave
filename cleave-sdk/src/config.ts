@@ -116,6 +116,12 @@ export interface CleaveConfig {
 
   /** Claude model to use (e.g. 'sonnet', 'opus', 'claude-sonnet-4-6') */
   model: string | null;
+
+  /** Max dollar spend per session (enforced via --max-budget-usd). 0 = no limit. */
+  sessionBudget: number;
+
+  /** Run session 1 in interactive TUI mode for clarifying questions */
+  interactiveFirst: boolean;
 }
 
 /** Resolve the effective session mode from config (handles backward compat). */
@@ -143,8 +149,8 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   handoffDeadline: 70,
   knowledgeKeepSessions: 5,
   rateLimitMaxWait: 18000,
-  sessionMode: 'tui',
-  tui: true,
+  sessionMode: 'print',
+  tui: false,
   sessionTimeout: 1800,   // 30 minutes
   isContinuation: false,
   continuePrompt: null,
@@ -154,9 +160,11 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   skipStage: null,
   activeStage: null,
   model: null,
+  sessionBudget: 5.00,
+  interactiveFirst: false,
 };
 
-export const VERSION = '5.5.0';
+export const VERSION = '6.0.0';
 
 /**
  * Validate config values at startup. Throws on invalid values.

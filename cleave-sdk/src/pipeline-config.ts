@@ -46,6 +46,9 @@ export function loadPipelineConfig(yamlPath: string, workDir?: string): Pipeline
     if (!s.name || typeof s.name !== 'string') {
       throw new Error(`Stage ${i + 1} requires a "name" field`);
     }
+    if (!/^[a-zA-Z0-9_-]+$/.test(s.name)) {
+      throw new Error(`Invalid stage name "${s.name}" — must be alphanumeric, dashes, and underscores only`);
+    }
     if (!s.prompt || typeof s.prompt !== 'string') {
       throw new Error(`Stage "${s.name}" requires a "prompt" field`);
     }

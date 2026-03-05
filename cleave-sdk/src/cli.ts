@@ -25,11 +25,13 @@ function addSharedOptions(cmd: Command): Command {
     .option('--safe-mode', 'Require permission prompts (default)', DEFAULT_CONFIG.safeMode)
     .option('--dangerously-skip-permissions', 'Skip Claude Code permission prompts')
     .option('-v, --verbose', 'Detailed logging', DEFAULT_CONFIG.verbose)
-    .option('--mode <mode>', 'Session mode: print (default, most reliable), tui (interactive), headless (Agent SDK)', DEFAULT_CONFIG.sessionMode)
+    .option('--mode <mode>', 'Session mode: print (default), tui (interactive), headless (Agent SDK)', DEFAULT_CONFIG.sessionMode)
     .option('--tui', 'Shorthand for --mode tui (interactive Claude Code TUI)')
     .option('--no-tui', 'Deprecated — use --mode headless')
     .option('--model <model>', 'Claude model to use (e.g. sonnet, opus, claude-sonnet-4-6)')
-    .option('--session-timeout <seconds>', 'Max seconds per session, 0=unlimited (default: 1800)', String(DEFAULT_CONFIG.sessionTimeout));
+    .option('--budget <dollars>', 'Max dollar spend per session (default: 5.00)', String(DEFAULT_CONFIG.sessionBudget))
+    .option('--session-timeout <seconds>', 'Max seconds per session, 0=unlimited (default: 1800)', String(DEFAULT_CONFIG.sessionTimeout))
+    .option('--interactive-first', 'Run session 1 in interactive TUI for clarifying questions');
 }
 
 /**
@@ -94,6 +96,8 @@ function validateAndBuildConfig(opts: any, program: Command): Partial<CleaveConf
     tui: sessionMode === 'tui',
     sessionTimeout,
     model: opts.model || null,
+    sessionBudget: parseFloat(opts.budget || String(DEFAULT_CONFIG.sessionBudget)),
+    interactiveFirst: opts.interactiveFirst ?? DEFAULT_CONFIG.interactiveFirst,
   };
 }
 

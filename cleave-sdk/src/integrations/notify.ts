@@ -2,19 +2,16 @@
  * Desktop notifications — macOS (osascript) and Linux (notify-send).
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 /**
- * Sanitize a string for safe embedding in shell commands.
+ * Sanitize a string for safe embedding in AppleScript/notification.
  */
 function sanitize(str: string): string {
   return str
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/'/g, '')
+    .replace(/[\\"`$']/g, '')
     .replace(/\n/g, ' ')
-    .replace(/`/g, '')
-    .replace(/\$/g, '');
+    .slice(0, 200);
 }
 
 /**
@@ -26,12 +23,11 @@ export function sendNotification(title: string, message: string): void {
 
   try {
     if (process.platform === 'darwin') {
-      execSync(
-        `osascript -e 'display notification "${safeMessage}" with title "${safeTitle}"'`,
-        { stdio: 'pipe', timeout: 5000 }
-      );
+      execFileSync('osascript', [
+        '-e', `display notification "${safeMessage}" with title "${safeTitle}"`
+      ], { stdio: 'pipe', timeout: 5000 });
     } else if (process.platform === 'linux') {
-      execSync(`notify-send "${safeTitle}" "${safeMessage}"`, {
+      execFileSync('notify-send', [safeTitle, safeMessage], {
         stdio: 'pipe',
         timeout: 5000,
       });

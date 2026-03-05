@@ -40,6 +40,9 @@ export async function runPipelineLoop(config: CleaveConfig): Promise<void> {
   const workDir = config.workDir;
   const pipelineDir = path.join(workDir, '.cleave');
 
+  // Initialize logger FIRST (before any logger.info calls)
+  logger.init(pipelineDir, config.verbose);
+
   // ── Initialize pipeline directory ──
   let state: PipelineState;
   const existingState = loadPipelineState(workDir);
@@ -61,9 +64,6 @@ export async function runPipelineLoop(config: CleaveConfig): Promise<void> {
   if (config.initialPromptFile && fs.existsSync(config.initialPromptFile)) {
     fs.copyFileSync(config.initialPromptFile, configCopyPath);
   }
-
-  // Initialize logger
-  logger.init(pipelineDir, config.verbose);
 
   // Acquire file lock
   const lock = new FileLock(pipelineDir);
@@ -171,8 +171,13 @@ export async function runPipelineLoop(config: CleaveConfig): Promise<void> {
       try {
         result = await runStage(config, pipeline, stage, stageNum, totalStages, state, attempt);
       } catch (err: any) {
-        logger.error(`Stage "${stage.name}" crashed unexpectedly: ${err.message}`);
-        logger.error(`Stack: ${err.stack || 'no stack'}`);
+        // Guard: logger itself may fail if .cleave/logs/ was deleted by a session.
+        // Use console.error as fallback to avoid cascade crash.
+        try {
+          logger.error(`Stage "${stage.name}" crashed unexpectedly: ${err.message}`);
+        } catch {
+          console.error(`[CLEAVE] Stage "${stage.name}" crashed: ${err.message}`);
+        }
         result = { completed: false, maxSessionsReached: false, sessionsRun: 0, lastSession: 0 };
       }
 
@@ -258,6 +263,14 @@ async function runStage(
   // Initialize stage directory
   initRelayDir(stagePaths);
 
+  // Clear stale handoff files from previous pipeline runs.
+  // Without this, a PROGRESS.md with STATUS: ALL_COMPLETE from a prior run
+  // causes runRelayCore() to immediately return "complete" without doing work.
+  const staleFiles = [stagePaths.handoffSignalFile, stagePaths.progressFile, stagePaths.nextPromptFile];
+  for (const f of staleFiles) {
+    try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch { /* best effort */ }
+  }
+
   // Update pipeline state
   state.stages[stage.name] = 'in_progress';
   state.currentStage = stage.name;
@@ -332,8 +345,9 @@ async function runStage(
       }
     }
 
-    // In headless mode, append handoff instructions directly to prompt
-    if (!cfg.tui) {
+    // In non-TUI modes, append handoff instructions directly to prompt
+    // (TUI mode passes them via --append-system-prompt instead)
+    if (cfg.sessionMode !== 'tui') {
       prompt += stageHandoff;
     }
 

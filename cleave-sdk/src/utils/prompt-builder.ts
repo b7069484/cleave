@@ -14,46 +14,38 @@ import { logger } from './logger';
  */
 export function buildHandoffInstructions(config: CleaveConfig): string {
   return `
+<!-- CLEAVE_RELAY_INSTRUCTIONS_V6 -->
+━━━━━━━━ CLEAVE AUTOMATED RELAY RULES ━━━━━━━━
 
-━━━━━━━━ CLEAVE AUTOMATED RELAY — YOU MUST FOLLOW THESE RULES ━━━━━━━━
-
-You are inside an automated relay. Another session will continue your work.
-Your job: make progress AND write handoff files. Both are equally important.
-
-RULE 1 — WRITE HANDOFF FILES EARLY AND OFTEN
-After completing each logical chunk of work (e.g., a batch of files, a phase),
-update .cleave/PROGRESS.md immediately. Do NOT wait until the end.
-If your session crashes, the relay system uses these files to continue.
-
-RULE 2 — CONTEXT BUDGET
-- 0–50%: Work zone. Do productive work. Update PROGRESS.md after each batch.
-- 50%: CHECKPOINT. Assess: will remaining work fit? If not, start handoff NOW.
-- ${config.handoffThreshold}%: HARD STOP. Begin handoff procedure immediately.
-- ${config.handoffDeadline}%+: DANGER. Quality collapses. Never reach this.
-
-RULE 3 — THE HANDOFF PROCEDURE (4 files, do them in order)
+THE HANDOFF PROCEDURE (do these 4 steps, in order, after each chunk of work):
 
 1. Write \`.cleave/PROGRESS.md\`:
-   First line: \`## STATUS: IN_PROGRESS\` (or \`${config.completionMarker}\` if ALL done)
-   Then: what you did, exactly where you stopped, what's left.
+   First line: \`## STATUS: IN_PROGRESS\` (or \`STATUS: ${config.completionMarker}\` if ALL done)
+   Then: SPECIFIC details — what you did, files changed, exactly where you stopped, what's left.
 
-2. Append to \`.cleave/KNOWLEDGE.md\` (DO NOT overwrite — append):
-   Add \`### Session N\` entry with what worked, what failed, key discoveries.
+2. Append to \`.cleave/KNOWLEDGE.md\` (APPEND — do NOT overwrite the file):
+   Add a \`### Session N\` entry with: what worked, what failed, key discoveries, gotchas.
 
 3. Write \`.cleave/NEXT_PROMPT.md\`:
-   Full instructions for the next session (it has ZERO memory of yours).
-   Include: task context, what's done, where to resume, key file paths.
-   End with: "When at ~${config.handoffThreshold}% context, STOP and do the handoff procedure."
+   Complete instructions for the next session. It has ZERO memory of yours.
+   Include: full task context, what's done, where to resume, key file paths, commands.
+   Do NOT copy these relay instructions into NEXT_PROMPT.md — they are auto-appended.
 
 4. Write \`HANDOFF_COMPLETE\` to \`.cleave/.handoff_signal\`
-   Then print RELAY_HANDOFF_COMPLETE and stop.
+   Then print the text RELAY_HANDOFF_COMPLETE and STOP working immediately.
 
-If ALL work is done: set \`STATUS: ${config.completionMarker}\` in PROGRESS.md,
-write \`TASK_FULLY_COMPLETE\` to .handoff_signal, print TASK_FULLY_COMPLETE.
+If ALL work is genuinely done AND verified:
+- Set \`STATUS: ${config.completionMarker}\` in PROGRESS.md
+- Write \`TASK_FULLY_COMPLETE\` to .handoff_signal
+- Print the text TASK_FULLY_COMPLETE
 
-CRITICAL: The relay system has a safety net — if you exit without handoff files,
-it will auto-generate rescue files from your git changes. But this is a FALLBACK.
-You should ALWAYS write the handoff files yourself for best continuity.
+SESSION BUDGET: You have a limited budget (~$${config.sessionBudget}). You WILL be cut off when it runs out. Write handoff files after EVERY significant chunk of work — they are your "save game." The last handoff files you wrote become the next session's starting point.
+
+YOUR SCOPE: Pick the top 1-3 items from the task or prior session's "Next Actions." Complete them thoroughly (read code, implement, test, commit). Update handoff files. If more work remains, do the handoff procedure and stop. The next session will continue where you left off.
+
+NEVER delete or modify .cleave/ infrastructure. ONLY write to the specific handoff files listed above.
+
+SAFETY NET: If you exit without handoff files, the relay auto-generates rescue files from your git changes. But this loses context. ALWAYS write handoff files yourself.
 `;
 }
 
@@ -72,12 +64,18 @@ function buildBasePrompt(config: CleaveConfig, sessionNum: number): string {
 
   if (sessionNum > 1 && fs.existsSync(nextPromptFile)) {
     const nextContent = fs.readFileSync(nextPromptFile, 'utf8').trim();
-    if (nextContent.length > 0) {
+    if (nextContent.length >= 200) {
       prompt = nextContent;
       logger.debug(`Session ${sessionNum}: using NEXT_PROMPT.md (${nextContent.length} chars)`);
+    } else if (nextContent.length > 0) {
+      // NEXT_PROMPT.md exists but is too short — likely a rushed/incomplete handoff
+      logger.warn(`NEXT_PROMPT.md too short (${nextContent.length} chars) for session ${sessionNum} — falling back to initial prompt + PROGRESS.md`);
+      prompt = fs.readFileSync(config.initialPromptFile, 'utf8');
+      if (fs.existsSync(progressFile)) {
+        prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${fs.readFileSync(progressFile, 'utf8')}`;
+      }
     } else {
-      // NEXT_PROMPT.md exists but is empty — fall back with warning
-      logger.warn(`⚠️  NEXT_PROMPT.md is empty for session ${sessionNum} — falling back to initial prompt + PROGRESS.md`);
+      logger.warn(`NEXT_PROMPT.md is empty for session ${sessionNum} — falling back to initial prompt + PROGRESS.md`);
       prompt = fs.readFileSync(config.initialPromptFile, 'utf8');
       if (fs.existsSync(progressFile)) {
         prompt += `\n\n--- PROGRESS FROM PRIOR SESSIONS ---\n${fs.readFileSync(progressFile, 'utf8')}`;
@@ -114,6 +112,15 @@ function buildBasePrompt(config: CleaveConfig, sessionNum: number): string {
     }
   }
 
+  // Ground later sessions back to the original task to prevent instruction drift
+  if (sessionNum >= 5) {
+    try {
+      const originalTask = fs.readFileSync(config.initialPromptFile, 'utf8');
+      const truncated = originalTask.slice(0, 1000);
+      prompt += `\n\n--- ORIGINAL TASK (for reference — do NOT redo completed work) ---\n${truncated}${originalTask.length > 1000 ? '\n[...truncated]' : ''}`;
+    } catch { /* initial prompt file may not exist for continuations */ }
+  }
+
   return prompt;
 }
 
@@ -132,8 +139,8 @@ export function buildTaskPrompt(config: CleaveConfig, sessionNum: number): strin
 export function buildSessionPrompt(config: CleaveConfig, sessionNum: number): string {
   const base = buildBasePrompt(config, sessionNum);
   // Don't double-append if the prompt already contains handoff instructions
-  // (happens when NEXT_PROMPT.md from prior session included them)
-  if (base.includes('AUTOMATED SESSION RELAY')) {
+  // Uses a machine-readable sentinel that Claude is unlikely to reproduce
+  if (base.includes('<!-- CLEAVE_RELAY_INSTRUCTIONS_V6 -->')) {
     return base;
   }
   return base + buildHandoffInstructions(config);
@@ -167,10 +174,14 @@ When your stage's work is FULLY done, set \`STATUS: ${stageCompletion}\` in
 **SHARED KNOWLEDGE:** If you discover insights useful for later stages,
 add them to your Core Knowledge section — they'll be promoted to shared knowledge.
 
-**CONTEXT BUDGET:** Same rules — stop at ~${config.handoffThreshold}% and do the handoff.
+**SESSION BUDGET:** You have a limited budget per session. Work in manageable chunks and write handoff files between chunks. If you are cut off, rescue files will be auto-generated.
 
 **HANDOFF SIGNAL:** When you complete the handoff procedure, write \`HANDOFF_COMPLETE\`
 to \`.cleave/stages/${stageName}/.handoff_signal\` as your final action.
 If the stage is fully done, write \`TASK_FULLY_COMPLETE\` to that file instead.
+
+**CRITICAL:** NEVER delete or modify \`.cleave/logs/\`, \`.cleave/shared/\`, or any
+file in \`.cleave/\` other than the handoff files listed above. The relay infrastructure
+depends on these files. Deleting them will crash the pipeline.
 `;
 }

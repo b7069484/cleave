@@ -126,13 +126,24 @@ async function runTuiSession(
   const promptFilePath = writePromptFile(paths.relayDir, taskPrompt);
   const handoffInstructions = buildHandoffInstructions(config);
 
-  const args: string[] = [
-    `You are session #${sessionNum} of an automated Cleave relay. ` +
-    `Read the file "${promptFilePath}" for your full task instructions. ` +
-    `Execute those instructions immediately. Do NOT ask for confirmation.`,
-    '--append-system-prompt', handoffInstructions,
-    '--settings', settingsPath,
-  ];
+  const isInteractiveFirst = config.interactiveFirst && sessionNum === 1;
+
+  const args: string[] = isInteractiveFirst
+    ? [
+        `You are starting a new Cleave relay. ` +
+        `Read the file "${promptFilePath}" for the task instructions. ` +
+        `Ask any clarifying questions you have before proceeding. ` +
+        `When you're ready, begin working on the task.`,
+        '--append-system-prompt', handoffInstructions,
+        '--settings', settingsPath,
+      ]
+    : [
+        `You are session #${sessionNum} of an automated Cleave relay. ` +
+        `Read the file "${promptFilePath}" for your full task instructions. ` +
+        `Execute those instructions immediately. Do NOT ask for confirmation.`,
+        '--append-system-prompt', handoffInstructions,
+        '--settings', settingsPath,
+      ];
 
   if (!config.safeMode) {
     args.push('--dangerously-skip-permissions');
@@ -147,10 +158,11 @@ async function runTuiSession(
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   try {
-    // Strip CLAUDECODE env var so the child claude process doesn't
+    // Strip env vars so the child claude process doesn't
     // think it's nested inside another session and refuse to start.
     const childEnv = { ...process.env };
     delete childEnv.CLAUDECODE;
+    delete childEnv.CLAUDE_CODE_ENTRYPOINT;
 
     const child = spawn('claude', args, {
       stdio: 'inherit',
@@ -167,6 +179,7 @@ async function runTuiSession(
     // Wait 30 seconds before starting to poll (give Claude time to begin work).
     // Then check every 5 seconds if handoff files are complete.
     // When they are, SIGTERM the TUI so the relay loop can continue.
+    // Skip entirely for interactive-first session 1 (user controls the TUI).
     const POLL_DELAY_MS = 30_000;    // Wait 30s before first check
     const POLL_INTERVAL_MS = 5_000;  // Then check every 5s
 
@@ -225,8 +238,11 @@ async function runTuiSession(
       }, POLL_INTERVAL_MS);
     };
 
-    // Delay the start of polling
-    const delayTimer = setTimeout(startPolling, POLL_DELAY_MS);
+    // Delay the start of polling — skip for interactive-first session 1
+    let delayTimer: ReturnType<typeof setTimeout> | null = null;
+    if (!isInteractiveFirst) {
+      delayTimer = setTimeout(startPolling, POLL_DELAY_MS);
+    }
 
     // ── Session timeout ──
     // If the session runs longer than sessionTimeout, force-kill it.
@@ -244,14 +260,14 @@ async function runTuiSession(
 
     result.exitCode = await new Promise<number>((resolve, reject) => {
       child.on('exit', (code) => {
-        clearTimeout(delayTimer);
+        if (delayTimer) clearTimeout(delayTimer);
         if (pollTimer) clearInterval(pollTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         // If we killed it intentionally, treat as success (exit 0)
         resolve(killedByRelay ? 0 : (code ?? 1));
       });
       child.on('error', (err) => {
-        clearTimeout(delayTimer);
+        if (delayTimer) clearTimeout(delayTimer);
         if (pollTimer) clearInterval(pollTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         logger.error(`Failed to spawn claude: ${err.message}`);
@@ -326,8 +342,8 @@ async function runHeadlessSession(
     query = sdk.query;
   } catch (err: any) {
     logger.error('Error: Claude Code Agent SDK not found.');
-    logger.error('  Headless mode (--no-tui) requires: npm install @anthropic-ai/claude-agent-sdk');
-    logger.error('  Or remove --no-tui to use interactive TUI mode instead.');
+    logger.error('  Headless mode (--mode headless) requires: npm install @anthropic-ai/claude-agent-sdk');
+    logger.error('  Or use --mode print (default) instead.');
     throw new Error(`Agent SDK not available: ${err.message}`);
   }
 
@@ -345,38 +361,80 @@ async function runHeadlessSession(
   ];
   const permissionMode = config.safeMode ? 'default' : 'bypassPermissions';
   const hooks = buildHooks(paths, config.completionMarker);
+  const handoffInstructions = buildHandoffInstructions(config);
+
+  // Track activity for rescue handoff
+  let toolUseCount = 0;
+  let lastToolName = '';
+  let totalOutputChars = 0;
 
   try {
     logger.debug(`Launching headless session #${sessionNum} (permission: ${permissionMode})`);
 
-    const messages = query({
-      prompt,
-      options: {
-        cwd: config.workDir,
-        allowedTools,
-        permissionMode,
-        hooks,
-      },
-    });
+    const options: any = {
+      cwd: config.workDir,
+      allowedTools,
+      permissionMode,
+      hooks,
+      systemPrompt: handoffInstructions,
+    };
+
+    // Budget cap
+    if (config.sessionBudget > 0) {
+      options.maxBudgetUsd = config.sessionBudget;
+    }
+
+    // Model selection
+    if (config.model) {
+      options.model = config.model;
+    }
+
+    // Permission bypass requires companion flag
+    if (permissionMode === 'bypassPermissions') {
+      options.allowDangerouslySkipPermissions = true;
+    }
+
+    const messages = query({ prompt, options });
 
     for await (const message of messages) {
       if (message.type === 'assistant') {
+        // Check for rate limit error on assistant message
+        if (message.error === 'rate_limit') {
+          result.rateLimited = true;
+          result.rateLimitResetAt = Date.now() + 300_000;
+          logger.warn('Rate limit hit (assistant error)');
+          break;
+        }
         for (const block of (message.message?.content || [])) {
           if (block.type === 'text') {
             result.resultText += block.text;
+            totalOutputChars += block.text.length;
             if (config.verbose) process.stdout.write(block.text);
+          } else if (block.type === 'tool_use') {
+            toolUseCount++;
+            lastToolName = block.name || 'unknown';
+            logger.info(`  [tool] ${lastToolName}`);
           }
         }
       } else if (message.type === 'result') {
-        result.resultText += message.result || '';
-      } else if (message.type === 'rate_limit') {
-        result.rateLimited = true;
-        result.rateLimitResetAt = message.resets_at
-          ? new Date(message.resets_at).getTime()
-          : Date.now() + 300_000;
-        logger.warn(`Rate limit hit. Resets at: ${message.resets_at || 'unknown'}`);
-        break;
+        // Check for error subtypes (budget exhaustion, etc.)
+        if (message.is_error && message.subtype === 'error_max_budget_usd') {
+          logger.warn(`Session #${sessionNum} hit budget cap`);
+        } else if (message.is_error) {
+          logger.warn(`Session #${sessionNum} result error: ${message.subtype || 'unknown'}`);
+        }
+        if (message.result) {
+          result.resultText += typeof message.result === 'string' ? message.result : JSON.stringify(message.result);
+        }
+      } else if (message.type === 'rate_limit_event') {
+        const info = message.rate_limit_info || message;
+        if (info.status === 'blocked' || info.overageStatus === 'blocked') {
+          result.rateLimited = true;
+          result.rateLimitResetAt = info.resetsAt ? info.resetsAt * 1000 : Date.now() + 300_000;
+          logger.warn(`Rate limit blocked. Resets at: ${new Date(result.rateLimitResetAt).toISOString()}`);
+        }
       }
+      // Silently ignore other message types (system, auth_status, etc.)
     }
   } catch (err: any) {
     const errMsg = String(err.message || err);
@@ -389,6 +447,20 @@ async function runHeadlessSession(
       logger.error(`Session error: ${errMsg}`);
     }
   }
+
+  result.estimatedOutputTokens = Math.round(totalOutputChars / 4);
+
+  // Rescue handoff — same logic as print mode
+  if (!result.rateLimited && toolUseCount > 0) {
+    const handoff = hasValidHandoff(paths);
+    if (!handoff.complete && !handoff.handedOff) {
+      writeRescueHandoff(paths, config, sessionNum, result.exitCode, toolUseCount, lastToolName);
+      result.exitCode = 0;
+    }
+  }
+
+  // Session summary
+  logger.info(`Session #${sessionNum} summary: ${toolUseCount} tool calls, ~${result.estimatedOutputTokens} output tokens`);
 
   return result;
 }
@@ -492,7 +564,7 @@ ${initialPrompt.slice(0, 3000)}${initialPrompt.length > 3000 ? '\n\n[... truncat
 ## Important
 - Do NOT redo work that's already committed
 - Check git status/diff FIRST before making any changes
-- When at ~${config.handoffThreshold}% context, STOP and do the handoff procedure.
+- You have a session budget. Work in chunks and write handoff files after each chunk.
 `;
 
   fs.writeFileSync(paths.nextPromptFile, rescueNext, 'utf8');
@@ -530,24 +602,31 @@ async function runPrintSession(
   };
 
   const handoffInstructions = buildHandoffInstructions(config);
+  const settingsPath = generateSettingsFile(paths.relayDir);
 
   const args: string[] = [
     '-p',
     '--output-format', 'stream-json',
     '--verbose',   // required for stream-json output
     '--append-system-prompt', handoffInstructions,
+    '--settings', settingsPath,
   ];
 
-  // Permission mode
-  if (!config.safeMode) {
-    args.push('--dangerously-skip-permissions');
-  } else {
-    args.push('--permission-mode', 'acceptEdits');
-  }
+  // Permission mode — print mode is non-interactive, so 'acceptEdits'
+  // would hang on Bash tool prompts. Always bypass in -p mode.
+  // Budget cap + handoff instructions are the real safety controls.
+  args.push('--dangerously-skip-permissions');
 
   // Model selection
   if (config.model) {
     args.push('--model', config.model);
+  }
+
+  // Budget cap — prevents sessions from burning through entire context window.
+  // This is the REAL context management: cost correlates with context usage.
+  // When budget is hit, Claude stops. Rescue handoff catches incomplete sessions.
+  if (config.sessionBudget > 0) {
+    args.push('--max-budget-usd', String(config.sessionBudget));
   }
 
   logger.debug(`Launching print session #${sessionNum}`);
@@ -566,9 +645,10 @@ async function runPrintSession(
   let completionDetectedInStream = false;
 
   try {
-    // Strip CLAUDECODE env var so the child doesn't think it's nested
+    // Strip env vars so the child doesn't think it's nested
     const childEnv = { ...process.env };
     delete childEnv.CLAUDECODE;
+    delete childEnv.CLAUDE_CODE_ENTRYPOINT;
 
     const child = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -641,18 +721,16 @@ async function runPrintSession(
           } else if (block.type === 'tool_use') {
             toolUseCount++;
             lastToolName = block.name || 'unknown';
-            if (config.verbose) {
-              logger.debug(`  Tool: ${lastToolName}`);
-            }
+            // Always show tool calls — this is the primary activity indicator
+            logger.info(`  [tool] ${lastToolName}`);
           }
         }
       } else if (event.type === 'content_block_start') {
-        // Streaming content block start
+        // Streaming content block start — only log in verbose to avoid double-counting
         if (event.content_block?.type === 'tool_use') {
-          toolUseCount++;
-          lastToolName = event.content_block.name || 'unknown';
+          const name = event.content_block.name || 'unknown';
           if (config.verbose) {
-            logger.debug(`  Tool: ${lastToolName}`);
+            logger.debug(`  [stream] tool start: ${name}`);
           }
         }
       } else if (event.type === 'content_block_delta') {
@@ -718,11 +796,8 @@ async function runPrintSession(
 
     result.estimatedOutputTokens = Math.round(totalOutputChars / 4);
 
-    // Log session summary
-    logger.debug(`Session #${sessionNum} print mode summary:`);
-    logger.debug(`  Tool calls: ${toolUseCount}`);
-    logger.debug(`  Output chars: ${totalOutputChars}`);
-    logger.debug(`  Est. output tokens: ${result.estimatedOutputTokens}`);
+    // Session summary — always shown
+    logger.info(`Session #${sessionNum} summary: ${toolUseCount} tool calls, ~${result.estimatedOutputTokens} output tokens`);
     if (lastToolName) logger.debug(`  Last tool: ${lastToolName}`);
 
     // Check stderr for rate limit signals

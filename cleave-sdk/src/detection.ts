@@ -45,35 +45,42 @@ export function hasCompletionSignal(output: string): 'handoff' | 'complete' | nu
 // ── Loop Detection ──
 
 /**
- * Calculate line-level similarity WITHOUT sorting (preserves structural order).
- * Uses bigram overlap for fuzzy comparison — more robust than exact line matching.
+ * Calculate order-aware similarity using bigram (consecutive line pair) comparison.
+ * More robust than exact line matching — catches reworded but structurally identical prompts.
  */
 function textSimilarity(textA: string, textB: string): number {
   if (!textA && !textB) return 100;
   if (!textA || !textB) return 0;
 
-  // Bigram-based similarity (pairs of consecutive lines)
   const linesA = textA.split('\n').filter(l => l.trim());
   const linesB = textB.split('\n').filter(l => l.trim());
 
   if (linesA.length === 0 && linesB.length === 0) return 100;
   if (linesA.length === 0 || linesB.length === 0) return 0;
 
-  // Use line-level set intersection (without sorting — compare exact lines)
-  const setB = new Set(linesB);
-  let matches = 0;
-  for (const line of linesA) {
-    if (setB.has(line)) matches++;
+  // Build bigrams (consecutive line pairs) for order-awareness
+  const bigramsA = new Set<string>();
+  for (let i = 0; i < linesA.length - 1; i++) {
+    bigramsA.add(linesA[i] + '\n' + linesA[i + 1]);
+  }
+  const bigramsB = new Set<string>();
+  for (let i = 0; i < linesB.length - 1; i++) {
+    bigramsB.add(linesB[i] + '\n' + linesB[i + 1]);
   }
 
-  const maxLines = Math.max(linesA.length, linesB.length);
-  return Math.round((matches / maxLines) * 100);
+  let matches = 0;
+  for (const bg of bigramsA) {
+    if (bigramsB.has(bg)) matches++;
+  }
+
+  const maxBigrams = Math.max(bigramsA.size, bigramsB.size);
+  if (maxBigrams === 0) return 100;
+  return Math.round((matches / maxBigrams) * 100);
 }
 
 /**
- * Detect if the current session's NEXT_PROMPT.md is a loop
- * (>85% similar to the previous session's archived prompt).
- * Checks from session 2 onward (not just 3+).
+ * Detect if the current session's NEXT_PROMPT.md is a loop.
+ * Compares against last 3 sessions (catches both direct repetition and A-B-A oscillation).
  */
 export function detectLoop(
   logsDir: string,
@@ -82,28 +89,26 @@ export function detectLoop(
   threshold: number = 85
 ): { isLoop: boolean; similarity: number } {
   if (sessionNum < 2) return { isLoop: false, similarity: 0 };
+  if (!fs.existsSync(nextPromptPath)) return { isLoop: false, similarity: 0 };
 
-  const prevPromptPath = path.join(logsDir, `session_${sessionNum - 1}_next_prompt.md`);
+  const currContent = fs.readFileSync(nextPromptPath, 'utf8');
 
-  if (!fs.existsSync(prevPromptPath) || !fs.existsSync(nextPromptPath)) {
-    return { isLoop: false, similarity: 0 };
+  // Compare against last 3 sessions (catches both direct repetition and oscillation)
+  const lookback = Math.min(3, sessionNum - 1);
+  let maxSimilarity = 0;
+
+  for (let i = 1; i <= lookback; i++) {
+    const prevPromptPath = path.join(logsDir, `session_${sessionNum - i}_next_prompt.md`);
+    if (!fs.existsSync(prevPromptPath)) continue;
+
+    try {
+      const prevContent = fs.readFileSync(prevPromptPath, 'utf8');
+      const similarity = textSimilarity(prevContent, currContent);
+      if (similarity > maxSimilarity) maxSimilarity = similarity;
+    } catch { continue; }
   }
 
-  try {
-    const prevContent = fs.readFileSync(prevPromptPath, 'utf8');
-    const currContent = fs.readFileSync(nextPromptPath, 'utf8');
-
-    // Quick size check — if sizes differ by more than 20%, not a loop
-    const sizeDiff = Math.abs(prevContent.length - currContent.length);
-    if (sizeDiff > prevContent.length * 0.2) {
-      return { isLoop: false, similarity: 0 };
-    }
-
-    const similarity = textSimilarity(prevContent, currContent);
-    return { isLoop: similarity > threshold, similarity };
-  } catch {
-    return { isLoop: false, similarity: 0 };
-  }
+  return { isLoop: maxSimilarity > threshold, similarity: maxSimilarity };
 }
 
 // ── Verification ──
@@ -117,13 +122,16 @@ export interface VerifyResult {
 /**
  * Run the verification command. Exit code 0 = task is done.
  * Timeout is now configurable (passed from CleaveConfig.verifyTimeout).
+ *
+ * TRUST MODEL: The --verify command is provided by the user and executed as a
+ * shell command. This is intentional — it's the user's own verification script.
  */
 export function runVerification(
   command: string,
   workDir: string,
   timeoutSec: number = 120
 ): VerifyResult {
-  logger.info(`🔍 Running verification: ${command}`);
+  logger.info(`Running verification: ${command}`);
 
   try {
     const output = execSync(command, {
@@ -131,9 +139,10 @@ export function runVerification(
       encoding: 'utf8',
       timeout: timeoutSec * 1000,
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: '/bin/bash',
     });
 
-    logger.success('✅ Verification PASSED');
+    logger.success('Verification PASSED');
     return { passed: true, exitCode: 0, output };
   } catch (err: any) {
     const exitCode = err.status ?? 1;

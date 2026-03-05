@@ -4,7 +4,7 @@
 # Prevents Claude from exiting until handoff files are written.
 # Input:  JSON on stdin with session/tool info
 # Output: JSON on stdout if blocking
-# Exit:   0 = allow exit, 2 = block exit
+# Exit:   Always 0. Block/allow communicated via JSON decision field.
 #
 # v5.1: Supports both standard relay (.cleave/) and pipeline stages
 #       (.cleave/stages/<name>/). Auto-detects which one is active.
@@ -91,7 +91,7 @@ if [ ! -f "$ACTIVE_RELAY" ]; then
 fi
 
 # Check if task is fully complete (STATUS must be at start of line, not in descriptions)
-if [ -f "$PROGRESS" ] && grep -qiP "^\s*[#*]*\s*STATUS[: *]+\s*(ALL_COMPLETE|TASK_FULLY_COMPLETE)" "$PROGRESS" 2>/dev/null; then
+if [ -f "$PROGRESS" ] && grep -qi "^[[:space:]#*]*STATUS[: *]*[[:space:]]*\(ALL_COMPLETE\|TASK_FULLY_COMPLETE\)" "$PROGRESS" 2>/dev/null; then
   exit 0
 fi
 
@@ -152,6 +152,7 @@ fi
 
 REASON="${REASON}You MUST: 1) Update ${FILE_PREFIX}/PROGRESS.md with status and stop point. 2) Update ${FILE_PREFIX}/KNOWLEDGE.md with session notes. 3) Write ${FILE_PREFIX}/NEXT_PROMPT.md for next session (must not be empty). 4) Print RELAY_HANDOFF_COMPLETE. If ALL work is done, set STATUS: ALL_COMPLETE in PROGRESS.md."
 
-# Output block decision and exit 2
+# Output block decision — exit 0 so Claude Code parses the JSON.
+# The decision:"block" in the JSON is what communicates the block, not the exit code.
 echo "{\"decision\":\"block\",\"reason\":\"$REASON\"}"
-exit 2
+exit 0

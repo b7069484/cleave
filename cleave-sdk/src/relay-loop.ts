@@ -4,7 +4,7 @@
  */
 
 import * as fs from 'fs';
-import { CleaveConfig } from './config';
+import { CleaveConfig, SessionMode } from './config';
 import {
   RelayPaths,
   resolvePaths,
@@ -41,12 +41,12 @@ async function handleRateLimit(resetAt: number | null, config: CleaveConfig): Pr
   while (remaining > 0) {
     const mins = Math.floor(remaining / 60_000);
     const secs = Math.floor((remaining % 60_000) / 1000);
-    process.stdout.write(`\r  Rate limit reset in: ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}  `);
-    const tick = Math.min(10_000, remaining);
+    process.stdout.write(`\r\x1b[2K  Rate limit reset in: ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}  `);
+    const tick = Math.min(1_000, remaining);
     await sleep(tick);
     remaining -= tick;
   }
-  process.stdout.write('\r  Rate limit should be lifted.                    \n');
+  process.stdout.write('\r\x1b[2K  Rate limit should be lifted.\n');
 }
 
 // ── Reusable Core ──
@@ -145,7 +145,14 @@ export async function runRelayCore(opts: RelayCoreOptions): Promise<RelayCoreRes
     // ── Run session ──
     let result;
     try {
-      result = await runSession(prompt, config, paths, sessionCount);
+      // Interactive-first: session 1 runs in TUI mode without auto-relay
+      // so the user can answer clarifying questions
+      if (config.interactiveFirst && sessionCount === 1) {
+        const interactiveConfig = { ...config, sessionMode: 'tui' as SessionMode, sessionTimeout: 0 };
+        result = await runSession(prompt, interactiveConfig, paths, sessionCount);
+      } else {
+        result = await runSession(prompt, config, paths, sessionCount);
+      }
     } catch (err: any) {
       logger.error(`${label}Session #${sessionCount} error: ${err.message}`);
       consecutiveCrashes++;

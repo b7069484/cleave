@@ -123,17 +123,17 @@ export function buildHooks(paths: RelayPaths, completionMarker: string) {
     Stop: [
       {
         hooks: [
-          async (_input: any) => {
+          async (_input: any, _toolUseID?: string, _options?: { signal: AbortSignal }) => {
             // If task is fully complete, allow exit
             if (isComplete(paths.progressFile, completionMarker)) {
               logger.debug('Stop hook: task complete, allowing exit');
-              return {};
+              return { decision: 'approve' };
             }
 
             // Check for handoff signal file
             if (fs.existsSync(paths.handoffSignalFile)) {
               logger.debug('Stop hook: handoff signal file found, allowing exit');
-              return {};
+              return { decision: 'approve' };
             }
 
             // Check if handoff files were written this session
@@ -141,7 +141,7 @@ export function buildHooks(paths: RelayPaths, completionMarker: string) {
 
             if (missing.length === 0 && stale.length === 0) {
               logger.debug('Stop hook: handoff files verified, allowing exit');
-              return {};
+              return { decision: 'approve' };
             }
 
             // Handoff incomplete — block exit
