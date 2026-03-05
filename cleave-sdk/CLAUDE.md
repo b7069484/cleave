@@ -44,7 +44,7 @@ npm run build && chmod +x dist/index.js && npm link
 - Rewrote handoff instructions — no longer asks Claude to self-monitor context %, focuses on chunk-based workflow
 - Rescue handoff (safety net) continues to catch sessions cut off by budget cap
 
-## v6.0.0 Reliability Overhaul (2026-03-05)
+## v7.0.0 Reliability Overhaul (2026-03-05)
 
 - **Stop hook fix**: exit 0 (not 2) + portable grep for macOS — hook actually works now
 - **Print mode hooks**: --settings file generated for print mode, matching TUI behavior

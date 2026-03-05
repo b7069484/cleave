@@ -164,7 +164,7 @@ export const DEFAULT_CONFIG: Omit<CleaveConfig, 'initialPromptFile'> = {
   interactiveFirst: false,
 };
 
-export const VERSION = '6.0.0';
+export const VERSION = '7.0.0';
 
 /**
  * Validate config values at startup. Throws on invalid values.

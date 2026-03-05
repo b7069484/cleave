@@ -1,6 +1,6 @@
 {
   "name": "cleave-sdk",
-  "version": "6.0.0",
+  "version": "7.0.0",
   "description": "Infinite context for Claude Code — chain sessions together automatically with self-authored handoffs, knowledge accumulation, and enforced handoff hooks.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
